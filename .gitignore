@@ -1,0 +1,33 @@
+# Runtime scan output
+results/
+*.log
+*.html
+
+# Tool restore/session artifacts
+hydra.restore
+*.restore
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+
+# Generated local notes and archives
+loot/
+reports/
+*.zip
+*.tar
+*.tar.gz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local environment files
+.env
+.env.*
+!.env.example
