@@ -1077,6 +1077,38 @@ report_privesc_handoff() {
     report_details_file "Handoff Summary" "${result_dir}/privesc/summary.txt" 60 ""
 }
 
+report_ad_attack() {
+    local result_dir="$1"
+    local preview_lines="$2"
+    [[ -d "${result_dir}/ad" ]] || return 0
+
+    echo "## Active Directory"
+    echo ""
+    report_details_file "AD Summary & Next Steps" "${result_dir}/ad/summary.txt" 60 ""
+    report_details_file "Domain Users" "${result_dir}/ad/users.txt" 200 ""
+    report_details_file "AS-REP Hashes" "${result_dir}/ad/asrep_hashes.txt" 40 ""
+    report_details_file "Kerberoast Hashes" "${result_dir}/ad/kerberoast_hashes.txt" 40 ""
+    report_details_file "Crack Hints" "${result_dir}/ad/crack_hints.txt" 30 "bash"
+    report_details_file "ADCS (certipy)" "${result_dir}/ad/certipy_find.txt" "$preview_lines" ""
+    report_details_file "secretsdump" "${result_dir}/ad/secretsdump.txt" "$preview_lines" ""
+    report_details_file "Relay / Coercion Commands" "${result_dir}/ad/relay_commands.txt" 40 "bash"
+    local f
+    for f in "${result_dir}/ad/"nxc_*.txt "${result_dir}/ad/"auth_*.txt "${result_dir}/ad/"enum4linux*.txt; do
+        [[ -s "$f" ]] || continue
+        report_details_file "AD Enum: $(basename "$f")" "$f" "$preview_lines" ""
+    done
+}
+
+report_commands_poc() {
+    local result_dir="$1"
+    [[ -s "${result_dir}/commands_poc.txt" ]] || return 0
+    echo "## Commands Executed (PoC)"
+    echo ""
+    echo "_Mọi lệnh tool đã chạy, theo thứ tự — copy thẳng vào báo cáo / write-up._"
+    echo ""
+    report_details_file "All commands run" "${result_dir}/commands_poc.txt" 1000 "bash"
+}
+
 report_screenshots_gallery() {
     local result_dir="$1"
     local shotdir="${result_dir}/web/screenshots"
@@ -1303,8 +1335,10 @@ run_report() {
         report_web_details "$result_dir" "$preview_lines" "$finding_limit"
         report_screenshots_gallery "$result_dir"
         report_vulnerability_evidence "$result_dir" "$preview_lines" "$finding_limit"
+        report_ad_attack "$result_dir" "$preview_lines"
         report_privesc_handoff "$result_dir" "$preview_lines"
         report_loot_wordlists_operator "$result_dir" "$preview_lines"
+        report_commands_poc "$result_dir"
         report_coverage_gaps "$result_dir"
         report_next_steps_v2 "$ip" "$result_dir" "$ports"
         report_file_index_v2 "$result_dir" "$file_index_limit"

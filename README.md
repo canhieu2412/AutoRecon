@@ -327,7 +327,8 @@ auto_recon/
 │   ├── 08_wordlist_toolkit.sh
 │   ├── 09_privesc.sh     # priv-esc handoff: CVE hints + peas + GTFOBins (v4.0)
 │   ├── 10_web_modern.sh  # httpx/katana/gowitness/arjun/dalfox/ctf/git (v4.0)
-│   └── 11_shell_handler.sh # revshell listener + file transfer (v4.0)
+│   ├── 11_shell_handler.sh # revshell listener + file transfer (v4.0)
+│   └── 12_ad_enum.sh     # Active Directory attack path / OSCP (v4.1)
 ├── scripts/
 │   └── js_analyzer.js
 ├── wordlists/

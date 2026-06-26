@@ -4,7 +4,7 @@
 # ============================================================================
 
 # ── Metadata ──
-APP_VERSION="4.0"
+APP_VERSION="4.1"
 
 # ── Scan Settings ──
 SCAN_METHOD="auto"          # auto | rustscan | naabu | masscan | nmap | nmap-single | nc | nc-quick

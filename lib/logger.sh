@@ -47,6 +47,15 @@ log_command_preview() {
     timestamp=$(date '+%H:%M:%S')
     echo -e "  ${DIM}Command: ${preview}${NC}"
     [[ -n "$LOG_FILE" ]] && echo "[${timestamp}] [CMD] ${preview}" >> "$LOG_FILE"
+    # Collect every executed command into a copy-paste-ready PoC file per target
+    # so it can be dropped straight into a report / exam write-up.
+    if [[ -n "${RESULT_DIR:-}" && -d "${RESULT_DIR}" ]]; then
+        local poc="${RESULT_DIR}/commands_poc.txt"
+        # Skip exact consecutive duplicates to keep the PoC log tidy.
+        if [[ "$(tail -n1 "$poc" 2>/dev/null)" != "$preview" ]]; then
+            printf '%s\n' "$preview" >> "$poc"
+        fi
+    fi
     return 0
 }
 

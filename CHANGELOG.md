@@ -1,5 +1,21 @@
 # Changelog
 
+## v4.1.0
+
+### Active Directory Attack Path (new, `modules/12_ad_enum.sh`, menu `[a]`)
+OSCP-oriented AD workflow; auto-runs in Full Auto when a host looks like a DC
+(Kerberos + LDAP + SMB), interactive sub-menu (TUI/text) for the rest:
+- **Unauth enum**: netexec/crackmapexec null+guest sessions (users, RID brute, shares, pass-pol), enum4linux-ng, rpcclient, anonymous LDAP; consolidates a domain `users.txt`.
+- **AS-REP roasting** (no creds) → hashcat -m 18200.
+- **Authenticated enum**: shares/users/groups/pass-pol/loggedon, share spidering, WinRM/MSSQL access (Pwn3d! detection), **Kerberoasting** (-m 13100), **BloodHound** ingest (`-c All`), **secretsdump** (DCSync when privileged).
+- **ADCS** via certipy (ESC1–ESC8 vulnerable templates).
+- **NTLM relay / coercion** handoff (ntlmrelayx/PetitPotam/coercer/mitm6/responder) — command-only, gated by OffSec-safe.
+- Crack hints + a summary with concrete next steps (evil-winrm / PtH / golden ticket / BloodHound path).
+
+### Reporting / PoC
+- Every executed command is now collected per target into `commands_poc.txt` (copy-paste-ready) and rendered in a new report section **Commands Executed (PoC)** — for exam write-ups.
+- New report section **Active Directory** (summary, hashes, ADCS, secretsdump, enum artifacts).
+
 ## v4.0.0
 
 ### Refactor foundation

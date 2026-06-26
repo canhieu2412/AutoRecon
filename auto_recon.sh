@@ -43,6 +43,7 @@ source "${SCRIPT_DIR}/modules/08_wordlist_toolkit.sh"
 source "${SCRIPT_DIR}/modules/09_privesc.sh"
 source "${SCRIPT_DIR}/modules/10_web_modern.sh"
 source "${SCRIPT_DIR}/modules/11_shell_handler.sh"
+source "${SCRIPT_DIR}/modules/12_ad_enum.sh"
 
 # ── Cleanup trap (kill background processes on exit/Ctrl+C) ──
 cleanup() {
@@ -289,7 +290,7 @@ phase_state_status() {
 
 phase_requires_artifacts() {
     case "$1" in
-        port_scan|service_enum|web_recon|vuln_scan|privesc|sqlmap_all_in_one|sqlmap_operator|wordlist_toolkit|report)
+        port_scan|service_enum|web_recon|vuln_scan|privesc|ad_enum|sqlmap_all_in_one|sqlmap_operator|wordlist_toolkit|report)
             return 0
             ;;
     esac
@@ -321,6 +322,9 @@ phase_output_ready() {
             ;;
         privesc)
             [[ -s "${result_dir}/privesc/summary.txt" ]]
+            ;;
+        ad_enum)
+            [[ -s "${result_dir}/ad/summary.txt" ]]
             ;;
         sqlmap_all_in_one)
             [[ -s "${result_dir}/vulns/sqlmap_all_in_one_summary.txt" ]]
@@ -455,6 +459,10 @@ show_phase_digest() {
             [[ -f "$summary_file" ]] && head -n 40 "$summary_file"
             [[ -s "${result_dir}/privesc/cve_hints.txt" ]] && \
                 grep -E '^[[:space:]]*\[' "${result_dir}/privesc/cve_hints.txt" 2>/dev/null | head -n 12
+            ;;
+        ad_enum)
+            summary_file="${result_dir}/ad/summary.txt"
+            [[ -f "$summary_file" ]] && head -n 40 "$summary_file"
             ;;
         sqlmap_all_in_one)
             summary_file="${result_dir}/vulns/sqlmap_all_in_one_summary.txt"
@@ -870,6 +878,7 @@ EOF
     echo -e "  ${CYAN}[p]${NC} 🪜 Priv-Esc Handoff    ${DIM}(CVE hints + linpeas/winpeas + GTFOBins)${NC}"
     echo -e "  ${CYAN}[6]${NC} 🔑 Brute / Toolkit     ${DIM}(hydra + operator toolkit, $([ "$AUTO_BRUTE" = true ] && echo "${GREEN}ON${NC}" || echo "${RED}OFF${NC}"))${NC}"
     echo -e "  ${CYAN}[h]${NC} 🐚 Shell Handler       ${DIM}(catch revshell + file transfer)${NC}"
+    echo -e "  ${CYAN}[a]${NC} 🏰 AD Attack Path      ${DIM}(enum + roast + bloodhound + adcs)${NC}"
     echo -e "  ${CYAN}[s]${NC} 🧪 SQLi Workflows      ${DIM}(SQLMap all-in-one + operator)${NC}"
     echo -e "  ${CYAN}[w]${NC} 🧬 Wordlist Toolkit    ${DIM}(CeWL + target seeds + crunch + rsmangler)${NC}"
     echo ""
@@ -885,7 +894,7 @@ EOF
     echo -e "  ${CYAN}[0]${NC} ❌ Exit"
     echo ""
     echo -e "${DIM}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -ne "  ${BOLD}Choose [0-9/s/w/p/h/t/c]:${NC} "
+    echo -ne "  ${BOLD}Choose [0-9/s/w/p/h/a/t/c]:${NC} "
 }
 
 # Full-screen gum main menu. Echoes a single choice token compatible with the
@@ -927,6 +936,7 @@ ${done_marks:-no scans yet}"
         "p  🪜 Priv-Esc Handoff      (CVE + linpeas/winpeas)" \
         "6  🔑 Brute / Toolkit" \
         "h  🐚 Shell Handler         (revshell + truyền file)" \
+        "a  🏰 AD Attack Path        (enum + roast + bloodhound)" \
         "s  🧪 SQLi Workflows" \
         "w  🧬 Wordlist Toolkit" \
         "7  📄 Generate Report" \
@@ -1513,6 +1523,14 @@ _run_single_pipeline() {
     run_phase_with_state "privesc" "Privilege Escalation Handoff" "$ip" "$result_dir" run_privesc "$ip" "$result_dir"
     [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
 
+    # Active Directory: auto-run unauth enum + AS-REP when this looks like a DC.
+    if declare -F ad_is_target >/dev/null && ad_is_target "$result_dir"; then
+        run_phase_with_state "ad_enum" "Active Directory" "$ip" "$result_dir" run_ad_enum "$ip" "$result_dir"
+        [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
+    else
+        skip_phase_with_state "ad_enum" "Active Directory" "$result_dir" "no AD indicators (kerberos/ldap+smb)"
+    fi
+
     if [[ "$AUTO_BRUTE" == "true" || "$AUTO_BRUTE" == "interactive" ]]; then
         run_phase_with_state "brute_force" "Brute Force" "$ip" "$result_dir" run_brute_force "$ip" "$result_dir"
         [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
@@ -1695,6 +1713,11 @@ main() {
             h|H)
                 clear
                 run_shell_handler "${TARGET:-}" "${RESULT_DIR:-$SCRIPT_DIR}"
+                ;;
+            a|A)
+                require_target || continue
+                clear
+                run_phase_explicit "ad_enum" "Active Directory" "$TARGET" "$RESULT_DIR" run_ad_enum "$TARGET" "$RESULT_DIR"
                 ;;
             s|S) sqli_menu ;;
             8) view_results ;;
