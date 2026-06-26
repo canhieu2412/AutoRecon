@@ -42,10 +42,14 @@ source "${SCRIPT_DIR}/modules/06_report.sh"
 source "${SCRIPT_DIR}/modules/08_wordlist_toolkit.sh"
 source "${SCRIPT_DIR}/modules/09_privesc.sh"
 source "${SCRIPT_DIR}/modules/10_web_modern.sh"
+source "${SCRIPT_DIR}/modules/11_shell_handler.sh"
 
 # ── Cleanup trap (kill background processes on exit/Ctrl+C) ──
 cleanup() {
     [[ $BASHPID -ne $MAIN_PID ]] && return 0
+    # Always restore the normal screen first so we never strand the terminal
+    # in the alternate (full-screen) buffer on exit or Ctrl-C.
+    declare -F tui_screen_cleanup >/dev/null && tui_screen_cleanup
     local bg_pids=""
     local has_temp_artifacts=false
     bg_pids=$(jobs -p 2>/dev/null || true)
@@ -865,6 +869,7 @@ EOF
     echo -e "  ${CYAN}[5]${NC} ⚠️  Vulnerability Scan  ${DIM}(nmap + searchsploit)${NC}"
     echo -e "  ${CYAN}[p]${NC} 🪜 Priv-Esc Handoff    ${DIM}(CVE hints + linpeas/winpeas + GTFOBins)${NC}"
     echo -e "  ${CYAN}[6]${NC} 🔑 Brute / Toolkit     ${DIM}(hydra + operator toolkit, $([ "$AUTO_BRUTE" = true ] && echo "${GREEN}ON${NC}" || echo "${RED}OFF${NC}"))${NC}"
+    echo -e "  ${CYAN}[h]${NC} 🐚 Shell Handler       ${DIM}(catch revshell + file transfer)${NC}"
     echo -e "  ${CYAN}[s]${NC} 🧪 SQLi Workflows      ${DIM}(SQLMap all-in-one + operator)${NC}"
     echo -e "  ${CYAN}[w]${NC} 🧬 Wordlist Toolkit    ${DIM}(CeWL + target seeds + crunch + rsmangler)${NC}"
     echo ""
@@ -880,42 +885,61 @@ EOF
     echo -e "  ${CYAN}[0]${NC} ❌ Exit"
     echo ""
     echo -e "${DIM}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -ne "  ${BOLD}Choose [0-9/s/w/p/t/c]:${NC} "
+    echo -ne "  ${BOLD}Choose [0-9/s/w/p/h/t/c]:${NC} "
 }
 
-# gum-backed main menu. Echoes a single choice token compatible with the
-# existing dispatch case (1-9, p, s, w, t, c, 0).
+# Full-screen gum main menu. Echoes a single choice token compatible with the
+# existing dispatch case (1-9, p, s, w, t, c, 0). All UI is drawn on the
+# terminal (fd2); only the chosen token goes to stdout for $(...) capture.
 tui_main_menu() {
-    clear
-    local subtitle="No target set"
+    tui_screen_enter
+
+    # ── Status line ──
+    local statline
     if [[ -n "$TARGET" ]]; then
         local done_marks=""
-        [[ -f "${RESULT_DIR}/scans/open_ports.txt" ]] && done_marks+="ports "
-        [[ -f "${RESULT_DIR}/scans/nmap_targeted.nmap" ]] && done_marks+="services "
-        [[ -f "${RESULT_DIR}/vulns/summary.txt" ]] && done_marks+="vulns "
-        [[ -f "${RESULT_DIR}/privesc/summary.txt" ]] && done_marks+="privesc "
-        [[ -f "${RESULT_DIR}/report.md" ]] && done_marks+="report "
-        subtitle="${TARGET_DISPLAY:-$TARGET} (${TARGET_TYPE}) | $(engagement_profile_label "${ENGAGEMENT_PROFILE:-balanced}")${done_marks:+ | done: ${done_marks}}"
+        [[ -f "${RESULT_DIR}/scans/open_ports.txt" ]]    && done_marks+="✓ports "
+        [[ -f "${RESULT_DIR}/scans/nmap_targeted.nmap" ]] && done_marks+="✓svc "
+        [[ -d "${RESULT_DIR}/web" ]] && compgen -G "${RESULT_DIR}/web/*.txt" >/dev/null 2>&1 && done_marks+="✓web "
+        [[ -f "${RESULT_DIR}/vulns/summary.txt" ]]        && done_marks+="✓vuln "
+        [[ -f "${RESULT_DIR}/privesc/summary.txt" ]]      && done_marks+="✓priv "
+        [[ -f "${RESULT_DIR}/report.md" ]]                && done_marks+="✓report "
+        statline="🎯 ${TARGET_DISPLAY:-$TARGET}  ·  ${TARGET_TYPE}  ·  $(engagement_profile_label "${ENGAGEMENT_PROFILE:-balanced}")  ·  safe:$([ "${OFFSEC_OSCP_SAFE_MODE}" == "true" ] && echo on || echo off)
+${done_marks:-no scans yet}"
+    else
+        statline="⚠ Chưa đặt target — chọn '🎯 Đổi Target' hoặc bất kỳ phase nào sẽ tự hỏi."
     fi
-    tui_header "Auto Recon v${APP_VERSION:-4.0}" "$subtitle" >&2
 
+    {
+        tui_header "🛰  AUTO RECON v${APP_VERSION:-4.0}" "$statline"
+        tui_note "↑/↓ di chuyển   ·   Enter chọn   ·   Ctrl-C thoát"
+    } >&2
+
+    # Order follows the natural recon flow; full-auto on top for one-click use.
+    local rows; rows=$(tui_rows)
     local sel
-    sel=$(tui_choose "Choose an action" \
-        "1  🚀 Full Auto Scan" \
+    sel=$(TUI_CHOOSE_HEIGHT=$(( rows > 22 ? 17 : rows - 6 )) tui_choose "Chọn hành động" \
+        "1  🚀 Full Auto Scan        (1 click: chạy hết)" \
         "2  🔌 Port Scan" \
         "3  🔧 Service Enumeration" \
         "4  🌐 Web Recon" \
         "5  ⚠️  Vulnerability Scan" \
-        "p  🪜 Priv-Esc Handoff" \
+        "p  🪜 Priv-Esc Handoff      (CVE + linpeas/winpeas)" \
         "6  🔑 Brute / Toolkit" \
+        "h  🐚 Shell Handler         (revshell + truyền file)" \
         "s  🧪 SQLi Workflows" \
         "w  🧬 Wordlist Toolkit" \
         "7  📄 Generate Report" \
         "8  📂 View Results" \
         "9  ⚙️  Settings" \
-        "t  🎯 Change Target" \
+        "t  🎯 Đổi Target" \
         "c  🔍 Check Tools" \
-        "0  ❌ Exit")
+        "0  ❌ Thoát")
+
+    # Drop back to the normal terminal so the chosen action streams output with
+    # scrollback intact; the next loop iteration re-enters full-screen.
+    tui_screen_leave
+
     # Token = first whitespace-delimited field.
     printf '%s\n' "${sel%%[[:space:]]*}"
 }
@@ -1093,7 +1117,31 @@ view_results() {
         read -r
         return
     fi
-    
+
+    # ── Full-screen gum browser: fuzzy-filter a file, then page it ──
+    if tui_enabled; then
+        while true; do
+            tui_screen_enter
+            local sel
+            sel=$( { printf '%s\n' "⏎ ← Quay lại menu"
+                     find "$RESULT_DIR" -type f \( -name "*.txt" -o -name "*.nmap" -o -name "*.xml" -o -name "*.md" -o -name "*.html" -o -name "*.json" -o -name "*.log" \) 2>/dev/null \
+                       | sed "s#^${RESULT_DIR}/##" | sort ; } \
+                   | TUI_FILTER_HEIGHT=$(( $(tui_rows) - 4 )) tui_filter "📂 Results: ${TARGET_DISPLAY:-$TARGET}" )
+            if [[ -z "$sel" || "$sel" == "⏎ "* ]]; then
+                tui_screen_leave
+                return
+            fi
+            local full="${RESULT_DIR}/${sel}"
+            if [[ "$sel" == *.html ]]; then
+                tui_screen_leave
+                echo -e "  ${ICON_INFO} HTML report — mở bằng trình duyệt: ${GREEN}xdg-open ${full}${NC}"
+                echo -e "  ${YELLOW}Press Enter...${NC}"; read -r
+            else
+                tui_pager "$full"   # gum pager (its own full-screen view)
+            fi
+        done
+    fi
+
     while true; do
         clear
         echo -e "${BOLD}${CYAN}  📂 RESULTS: ${TARGET}${NC}"
@@ -1643,6 +1691,10 @@ main() {
                 echo ""
                 echo -e "  ${YELLOW}Press Enter to continue...${NC}"
                 read -r
+                ;;
+            h|H)
+                clear
+                run_shell_handler "${TARGET:-}" "${RESULT_DIR:-$SCRIPT_DIR}"
                 ;;
             s|S) sqli_menu ;;
             8) view_results ;;

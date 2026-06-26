@@ -326,7 +326,8 @@ auto_recon/
 │   ├── 07_operator_toolkit.sh
 │   ├── 08_wordlist_toolkit.sh
 │   ├── 09_privesc.sh     # priv-esc handoff: CVE hints + peas + GTFOBins (v4.0)
-│   └── 10_web_modern.sh  # httpx/katana/gowitness/arjun/dalfox/ctf/git (v4.0)
+│   ├── 10_web_modern.sh  # httpx/katana/gowitness/arjun/dalfox/ctf/git (v4.0)
+│   └── 11_shell_handler.sh # revshell listener + file transfer (v4.0)
 ├── scripts/
 │   └── js_analyzer.js
 ├── wordlists/

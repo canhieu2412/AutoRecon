@@ -24,9 +24,16 @@
 - New report sections: web screenshot gallery (with `<img>` rendering in HTML), privilege-escalation handoff, CTF endpoints, crawled endpoints, JS secrets, httpx/dalfox/git-exposure artifacts.
 
 ### TUI (gum-backed, `lib/tui.sh`)
-- Optional terminal UI built on charmbracelet `gum`: styled main menu, target input, confirms, and a live pipeline dashboard that refreshes after each phase during Full Auto.
-- Fully optional and auto-detected: falls back to the classic text menu when gum is absent or output is not a TTY. Toggle with `USE_TUI=auto|on|off` or `--tui` / `--no-tui`. The text pipeline overview also shows in classic mode.
+- Optional terminal UI built on charmbracelet `gum`: **full-screen** main menu (alternate screen buffer), target input, confirms, a fuzzy-filter + pager results browser, and a live pipeline dashboard that refreshes after each phase during Full Auto.
+- Full-screen launcher model: the menu takes the whole screen, then drops back to the normal terminal while a scan streams (scrollback preserved), then pops back. The EXIT/INT trap always restores the screen.
+- Fully optional and auto-detected via the controlling terminal (`/dev/tty`), so it works even when menu helpers run inside `$(...)`. Falls back to the classic text menu when gum is absent. Toggle `USE_TUI=auto|on|off` or `--tui` / `--no-tui`.
 - Install: `sudo apt install gum` (or `go install github.com/charmbracelet/gum@latest`).
+
+### Shell Handler & File Transfer (new, `modules/11_shell_handler.sh`, menu `[h]`)
+- Reverse-shell payload cheatsheet generator (bash/python/nc/perl/php/socat + base64 + Windows PowerShell) auto-filled with LHOST/LPORT.
+- Listener to catch reverse shells: prefers `pwncat-cs` (auto-stabilise + up/download), falls back to `ncat`, `rlwrap nc`, or plain `nc`.
+- Serve files **to** target over HTTP (python/php) with ready wget/curl/certutil/powershell fetch commands.
+- Receive files **from** target: python `uploadserver` (HTTP POST) when available, else an `nc`/`ncat` receiver. Loot saved under `<results>/shells/loot/`.
 
 ## v3.7.0
 

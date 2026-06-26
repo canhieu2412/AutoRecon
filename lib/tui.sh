@@ -17,12 +17,47 @@ TUI_C_WARN="${TUI_C_WARN:-214}"          # orange
 TUI_C_DIM="${TUI_C_DIM:-244}"            # grey
 
 # Is the gum TUI active right now?
+# NOTE: we must NOT test `-t 1`. Menu helpers run inside command substitution
+# (sel=$(tui_choose ...)) where fd1 is a pipe, which would wrongly disable the
+# TUI. gum interacts through the controlling terminal, so we test /dev/tty.
 tui_enabled() {
     case "${USE_TUI:-auto}" in
         off|false|0) return 1 ;;
     esac
-    [[ -t 1 ]] || return 1
-    command -v gum &>/dev/null
+    command -v gum &>/dev/null || return 1
+    # Is there a usable controlling terminal? (works even when stdout is captured)
+    { true >/dev/tty; } 2>/dev/null
+}
+
+# ── Full-screen (alternate screen buffer) ──────────────────────────────────
+# The main menu lives full-screen; we drop back to the normal terminal while a
+# scan phase streams output (so scrollback is preserved), then pop back.
+TUI_SCREEN_ACTIVE=0
+
+tui_rows() { tput lines 2>/dev/null || echo 24; }
+tui_cols() { tput cols  2>/dev/null || echo 80; }
+
+# Enter the alternate screen and clear it. All UI must go to the terminal
+# (fd2) because callers usually capture stdout via $(...).
+tui_screen_enter() {
+    tui_enabled || return 0
+    [[ "$TUI_SCREEN_ACTIVE" == "1" ]] && return 0
+    { tput smcup; tput clear; } >&2 2>/dev/null || true
+    TUI_SCREEN_ACTIVE=1
+}
+
+# Restore the normal terminal (previous scrollback intact).
+tui_screen_leave() {
+    [[ "$TUI_SCREEN_ACTIVE" == "1" ]] || return 0
+    tput rmcup >&2 2>/dev/null || true
+    TUI_SCREEN_ACTIVE=0
+}
+
+# Safety net for the EXIT/INT trap: never leave the user in the alt buffer.
+tui_screen_cleanup() {
+    [[ "$TUI_SCREEN_ACTIVE" == "1" ]] || return 0
+    tput rmcup 2>/dev/null || true
+    TUI_SCREEN_ACTIVE=0
 }
 
 # Bordered title block. Args: title [subtitle]
@@ -56,10 +91,11 @@ tui_note() {
 # Each item is shown as-is; callers parse the leading token.
 tui_choose() {
     local header="$1"; shift
+    local height="${TUI_CHOOSE_HEIGHT:-16}"
     if tui_enabled; then
         gum choose --header "$header" --cursor "❯ " \
             --cursor.foreground "$TUI_C_ACCENT" --header.foreground "$TUI_C_PRIMARY" \
-            --height 16 "$@"
+            --height "$height" "$@"
     else
         # Plain numbered fallback.
         echo -e "  ${BOLD}${header}${NC}" >&2
@@ -103,9 +139,24 @@ tui_confirm() {
 tui_filter() {
     local header="$1"
     if tui_enabled; then
-        gum filter --header "$header" --height 18 --header.foreground "$TUI_C_PRIMARY"
+        gum filter --header "$header" --height "${TUI_FILTER_HEIGHT:-20}" \
+            --placeholder "gõ để lọc..." --header.foreground "$TUI_C_PRIMARY"
     else
         cat   # no-op passthrough
+    fi
+}
+
+# Full-screen scrollable viewer for a file. Args: <file>
+tui_pager() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    if tui_enabled; then
+        # gum pager renders ANSI; strip nothing so colours from artifacts show.
+        gum pager < "$file"
+    elif command -v less &>/dev/null; then
+        less -R "$file"
+    else
+        cat "$file"
     fi
 }
 

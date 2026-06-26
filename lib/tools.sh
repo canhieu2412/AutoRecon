@@ -12,7 +12,7 @@
 # Keep this list authoritative: config/tool_check.sh renders from it so the
 # dependency report never drifts from what the modules actually use.
 TOOL_GROUP_ORDER=(
-    critical scan web_modern web enum windows linux vuln privesc brute wordlists other
+    critical scan web_modern web enum windows linux vuln privesc shell brute wordlists other
 )
 
 declare -A TOOL_GROUPS=(
@@ -25,6 +25,7 @@ declare -A TOOL_GROUPS=(
     [linux]="ssh ssh-audit sshpass scp rsync sftp showmount rpcinfo mount.nfs redis-cli mysql psql"
     [vuln]="searchsploit nuclei sslscan sqlmap"
     [privesc]="curl wget python3"
+    [shell]="nc ncat pwncat-cs rlwrap socat python3"
     [brute]="hydra john hashcat"
     [wordlists]="cewl crunch rsmangler"
     [other]="wfuzz jq gum"
@@ -40,6 +41,7 @@ declare -A TOOL_GROUP_LABELS=(
     [linux]="Linux Operator"
     [vuln]="Vuln Scanning"
     [privesc]="Privilege Escalation Handoff"
+    [shell]="Shell Handler & File Transfer"
     [brute]="Brute Force & Cracking"
     [wordlists]="Wordlist Toolkit"
     [other]="Other Tools"
