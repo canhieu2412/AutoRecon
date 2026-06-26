@@ -311,6 +311,9 @@ auto_recon/
 ├── lib/
 │   ├── colors.sh
 │   ├── logger.sh
+│   ├── net.sh            # URL/host parsing + ANSI helpers (v4.0)
+│   ├── tools.sh          # tool registry + run wrappers + fallbacks (v4.0)
+│   ├── tui.sh            # gum-backed TUI + classic fallback (v4.0)
 │   └── utils.sh
 ├── modules/
 │   ├── 00_host_discovery.sh
@@ -321,7 +324,9 @@ auto_recon/
 │   ├── 05_brute_force.sh
 │   ├── 06_report.sh
 │   ├── 07_operator_toolkit.sh
-│   └── 08_wordlist_toolkit.sh
+│   ├── 08_wordlist_toolkit.sh
+│   ├── 09_privesc.sh     # priv-esc handoff: CVE hints + peas + GTFOBins (v4.0)
+│   └── 10_web_modern.sh  # httpx/katana/gowitness/arjun/dalfox/ctf/git (v4.0)
 ├── scripts/
 │   └── js_analyzer.js
 ├── wordlists/
@@ -435,6 +440,50 @@ Repo public nên chỉ chứa source code, README, wordlist builtin nhỏ và t�
 - `redis-cli`
 - `showmount`
 - `impacket-*`
+
+### 4.4 Modern tooling (tùy chọn, v4.0 — có thì dùng, không có thì fallback)
+
+Tất cả tool dưới đây đều **optional**: nếu chưa cài, tool tự dùng phương án thay thế (whatweb, gobuster, curl…) nên pipeline vẫn chạy.
+
+- `httpx` — fast probe (title/status/tech/server) cho mọi web target
+- `katana` / `gospider` / `hakrawler` — crawl endpoint + JS
+- `gowitness` / `aquatone` — chụp screenshot web cho report
+- `naabu` — engine port-scan nhanh (vào vòng auto rotation)
+- `dnsx` — bulk-resolve subdomain, loại bỏ wildcard/dead host
+- `arjun` — đào tham số ẩn (GET/POST)
+- `dalfox` — quét XSS (tự skip khi bật OffSec-safe mode)
+- `joomscan` — quét Joomla
+- `git-dumper` — tự dump khi phát hiện `.git/` lộ
+
+Cài nhanh (ProjectDiscovery + Go tools):
+
+```bash
+# ProjectDiscovery
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
+go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+# Screenshots / XSS / git
+go install github.com/sensepost/gowitness@latest
+go install github.com/hahwul/dalfox/v2@latest
+pipx install arjun
+pipx install git-dumper
+
+# TUI (tùy chọn — giao diện gum)
+sudo apt install gum         # hoặc: go install github.com/charmbracelet/gum@latest
+```
+
+### 4.5 Giao diện TUI (gum)
+
+`auto_recon` tự bật **TUI** (menu + nhập target + dashboard tiến độ trực tiếp) khi có `gum` và đang chạy trên terminal thật. Nếu chưa cài gum, tool tự dùng menu text như cũ — không lỗi.
+
+```bash
+./auto_recon.sh --tui      # ép dùng TUI (cần gum)
+./auto_recon.sh --no-tui   # ép dùng menu text cổ điển
+# mặc định: auto (có gum thì dùng TUI)
+```
+
+Đặt cố định trong `config/config.sh`: `USE_TUI="auto" | "on" | "off"`.
 
 ## 5. Cách chạy
 

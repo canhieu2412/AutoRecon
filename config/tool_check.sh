@@ -5,17 +5,7 @@
 
 check_tools() {
     local missing=0
-    local tools_critical="nmap nc curl"
-    local tools_scan="rustscan nmap nc"
-    local tools_web="gobuster feroxbuster ffuf nikto whatweb wafw00f cewl node subfinder"
-    local tools_enum="enum4linux smbclient smbmap rpcclient netexec ldapsearch snmp-check dnsrecon dnsenum impacket-GetNPUsers impacket-GetUserSPNs impacket-secretsdump"
-    local tools_windows="evil-winrm xfreerdp certipy bloodhound-python responder impacket-smbclient impacket-psexec impacket-wmiexec impacket-atexec impacket-lookupsid impacket-mssqlclient"
-    local tools_linux="ssh ssh-audit sshpass scp rsync sftp showmount rpcinfo mount.nfs redis-cli mysql psql"
-    local tools_vuln="searchsploit nuclei sslscan sqlmap"
-    local tools_brute="hydra john hashcat"
-    local tools_wordlists="cewl crunch rsmangler"
-    local tools_other="wfuzz"
-    
+
     print_tool_group() {
         local title="$1"
         local tools="$2"
@@ -42,17 +32,16 @@ check_tools() {
         done
     }
 
-    print_tool_group "Critical Tools" "$tools_critical" "critical"
-    print_tool_group "Port Scanning" "$tools_scan"
-    print_tool_group "Web Recon" "$tools_web"
-    print_tool_group "Service Enum" "$tools_enum"
-    print_tool_group "Windows Operator" "$tools_windows"
-    print_tool_group "Linux Operator" "$tools_linux"
-    print_tool_group "Vuln Scanning" "$tools_vuln"
-    print_tool_group "Brute Force & Cracking" "$tools_brute"
-    print_tool_group "Wordlist Toolkit" "$tools_wordlists"
-    print_tool_group "Other Tools" "$tools_other"
-    
+    # Render from the central registry in lib/tools.sh so the dependency
+    # report always matches the tools the modules actually invoke.
+    local group
+    for group in "${TOOL_GROUP_ORDER[@]}"; do
+        print_tool_group \
+            "${TOOL_GROUP_LABELS[$group]:-$group}" \
+            "${TOOL_GROUPS[$group]}" \
+            "${TOOL_GROUP_SEVERITY[$group]:-optional}"
+    done
+
     # Summary
     echo ""
     sub_header "Wordlists"
@@ -71,7 +60,7 @@ check_tools() {
         [[ -z "$tool" ]] && continue
         total=$((total+1))
         command -v "$tool" &>/dev/null && installed=$((installed+1))
-    done < <(printf '%s\n' $tools_critical $tools_scan $tools_web $tools_enum $tools_windows $tools_linux $tools_vuln $tools_brute $tools_wordlists $tools_other | awk '!seen[$0]++')
+    done < <(for g in "${TOOL_GROUP_ORDER[@]}"; do printf '%s\n' ${TOOL_GROUPS[$g]}; done | awk '!seen[$0]++')
     echo -e "  ${BOLD}Total: ${installed}/${total} tools installed${NC}"
     
     if [[ $missing -eq 1 ]]; then

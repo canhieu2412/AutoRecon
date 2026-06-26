@@ -41,6 +41,8 @@ sub render_inline {
     $text = esc($text);
     $text =~ s/\*\*([^*]+)\*\*/<strong>$1<\/strong>/g;
     $text =~ s/`([^`]+)`/<code>$1<\/code>/g;
+    # Images (must run before the link rule): ![alt](src)
+    $text =~ s/!\[([^\]]*)\]\(([^)]+)\)/'<img src="' . $2 . '" alt="' . $1 . '" loading="lazy" style="max-width:100%;border:1px solid var(--border);border-radius:6px;margin:6px 0;">'/ge;
     $text =~ s/\[([^\]]+)\]\(([^)]+)\)/'<a href="' . $2 . '">' . $1 . '<\/a>'/ge;
     $text =~ s{(https?://[A-Za-z0-9\-\._~:/\?#\[\]@!\$&'\(\)\*\+,;=%]+)}{<a href="$1">$1</a>}g;
     return apply_finding_markup($text);
@@ -1009,16 +1011,24 @@ report_web_details() {
             report_details_file "SSL/TLS: ${url}" "${result_dir}/web/ssl_${base_name}.txt" 80 ""
             report_details_file "WAF: ${url}" "${result_dir}/web/waf_${base_name}.txt" 60 ""
             report_details_file "Source Analysis: ${url}" "${result_dir}/web/source_analysis_${base_name}.txt" "$preview_lines" ""
+            report_details_file "CTF / Sensitive Endpoints: ${url}" "${result_dir}/web/ctf_endpoints_${base_name}.txt" 60 ""
+            report_details_file "Crawled Endpoints: ${url}" "${result_dir}/web/crawl_endpoints_${base_name}.txt" 80 ""
+            report_details_file "JS Secrets: ${url}" "${result_dir}/web/js_secrets_${base_name}.txt" 60 ""
+            report_details_file "arjun Params: ${url}" "${result_dir}/web/arjun_${base_name}.json" 40 "json"
             echo ""
         done <<< "$web_targets"
     fi
+
+    report_details_file "httpx Probe (all targets)" "${result_dir}/web/httpx.txt" "$preview_lines" ""
+    report_details_file "Git Exposure Handoff" "${result_dir}/web/git_exposure.txt" 40 "bash"
+    report_details_file "dalfox XSS Findings" "${result_dir}/web/dalfox.txt" "$preview_lines" ""
 
     for file in "${result_dir}/web/feroxbuster_"*.txt "${result_dir}/web/gobuster_d"*.txt "${result_dir}/web/ffuf_"*.json "${result_dir}/web/vhost_fuzz_"*.json; do
         [[ -s "$file" ]] || continue
         report_details_file "Discovery Artifact: $(basename "$file")" "$file" "$preview_lines" "$([[ "$file" == *.json ]] && echo json || echo)"
     done
 
-    for file in "${result_dir}/web/nikto_"*.txt "${result_dir}/web/wpscan_"*.txt "${result_dir}/web/joomla_"*.txt "${result_dir}/web/drupal_"*.txt "${result_dir}/web/cms_fuzz_"*.txt "${result_dir}/web/cms_fuzz_"*.json; do
+    for file in "${result_dir}/web/nikto_"*.txt "${result_dir}/web/wpscan_"*.txt "${result_dir}/web/joomla_"*.txt "${result_dir}/web/joomscan_"*.txt "${result_dir}/web/drupal_"*.txt "${result_dir}/web/cms_fuzz_"*.txt "${result_dir}/web/cms_fuzz_"*.json; do
         [[ -s "$file" ]] || continue
         report_details_file "Web Scanner Artifact: $(basename "$file")" "$file" "$preview_lines" "$([[ "$file" == *.json ]] && echo json || echo)"
     done
@@ -1050,6 +1060,44 @@ report_vulnerability_evidence() {
     for file in "${result_dir}/vulns/nuclei_"*.txt "${result_dir}/vulns/sqlmap_operator/"*.txt; do
         [[ -s "$file" ]] || continue
         report_details_file "Vulnerability Artifact: $(basename "$file")" "$file" "$preview_lines" "$([[ "$file" == *.json ]] && echo json || echo)"
+    done
+}
+
+report_privesc_handoff() {
+    local result_dir="$1"
+    local preview_lines="$2"
+    [[ -d "${result_dir}/privesc" ]] || return 0
+
+    echo "## Privilege Escalation Handoff"
+    echo ""
+    report_details_file "CVE / Exploit Hints (from banners)" "${result_dir}/privesc/cve_hints.txt" "$preview_lines" ""
+    report_details_file "Linux Priv-Esc Cheatsheet" "${result_dir}/privesc/linux_privesc.txt" 120 "bash"
+    report_details_file "Windows Priv-Esc Cheatsheet" "${result_dir}/privesc/windows_privesc.txt" 120 "bash"
+    report_details_file "GTFOBins / LOLBAS Reference" "${result_dir}/privesc/gtfobins_lolbas.txt" 120 ""
+    report_details_file "Handoff Summary" "${result_dir}/privesc/summary.txt" 60 ""
+}
+
+report_screenshots_gallery() {
+    local result_dir="$1"
+    local shotdir="${result_dir}/web/screenshots"
+    local -a shots=()
+    local f
+    while IFS= read -r f; do shots+=("$f"); done < <(find "$shotdir" -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) 2>/dev/null | sort)
+    [[ ${#shots[@]} -eq 0 ]] && return 0
+
+    echo "## Web Screenshots"
+    echo ""
+    echo "_${#shots[@]} screenshot(s) captured. Click to view full size._"
+    echo ""
+    for f in "${shots[@]}"; do
+        local rel
+        rel=$(report_rel_path "$result_dir" "$f")
+        echo "### $(basename "$f")"
+        echo ""
+        echo "![$(basename "$f")](${rel})"
+        echo ""
+        echo "[Open full size](${rel})"
+        echo ""
     done
 }
 
@@ -1253,7 +1301,9 @@ run_report() {
         report_attack_surface_inventory "$result_dir"
         report_service_evidence "$result_dir" "$preview_lines"
         report_web_details "$result_dir" "$preview_lines" "$finding_limit"
+        report_screenshots_gallery "$result_dir"
         report_vulnerability_evidence "$result_dir" "$preview_lines" "$finding_limit"
+        report_privesc_handoff "$result_dir" "$preview_lines"
         report_loot_wordlists_operator "$result_dir" "$preview_lines"
         report_coverage_gaps "$result_dir"
         report_next_steps_v2 "$ip" "$result_dir" "$ports"

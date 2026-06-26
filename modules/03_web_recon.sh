@@ -859,6 +859,17 @@ run_subdomain_enum() {
     sort -u "$tmp_found" | grep -v "^${domain}$" > "$domain_out"
     rm -f "$tmp_found" "$subfinder_out" "$gobuster_out" "$dnsrecon_out"
 
+    # Fast bulk resolution with dnsx (drops dead brute-force / wildcard noise).
+    if command -v dnsx &>/dev/null && [[ -s "$domain_out" ]]; then
+        local dnsx_live="${domain_out}.live"
+        timeout "$TOOL_TIMEOUT" dnsx -silent -l "$domain_out" -o "$dnsx_live" 2>/dev/null
+        if [[ -s "$dnsx_live" ]]; then
+            sort -u "$dnsx_live" -o "$domain_out"
+            log_info "dnsx confirmed $(wc -l < "$domain_out") resolvable subdomain(s)"
+        fi
+        rm -f "$dnsx_live"
+    fi
+
     local sub_count
     sub_count=$(wc -l < "$domain_out" 2>/dev/null || echo 0)
     if [[ "$sub_count" -eq 0 ]]; then
@@ -1399,6 +1410,13 @@ detect_and_scan_cms() {
     # Joomla
     if echo "$body" | grep -qi "joomla\|com_content"; then
         print_found "Joomla detected!"
+        if command -v joomscan &>/dev/null; then
+            log_scan "Running joomscan..."
+            local -a joomscan_cmd=(timeout 300 joomscan --url "$url")
+            log_command_preview "${joomscan_cmd[@]}"
+            "${joomscan_cmd[@]}" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' > "${result_dir}/web/joomscan_${base_name}.txt"
+            log_success "joomscan → ${result_dir}/web/joomscan_${base_name}.txt"
+        fi
         local target_host
         local target_port
         target_host=$(echo "$url" | sed -E 's#https?://([^/:]+).*#\1#')
@@ -1590,10 +1608,13 @@ emit_ffuf_match_line() {
 
 resolve_gobuster_next_url() {
     local current_url="$1"
-    local result_line="$2"
+    local result_line
+    # Strip ANSI escape codes
+    result_line=$(echo "$2" | sed 's/\x1b\[[0-9;]*m//g')
 
     local first_field
     first_field=$(echo "$result_line" | awk '{print $1}')
+    [[ -z "$first_field" ]] && return 1
 
     local redirect_target
     redirect_target=$(echo "$result_line" | sed -nE 's#.*\[--> ([^]]+)\].*#\1#p')
@@ -1611,6 +1632,16 @@ resolve_gobuster_next_url() {
         next_url="$first_field"
     else
         next_url="${current_url%/}/${first_field#/}"
+    fi
+
+    # Security check: Ensure next_url is within the same host/domain to avoid out-of-scope fuzzing
+    local current_host
+    current_host=$(echo "$current_url" | sed -E 's#https?://([^/]+).*#\1#')
+    local next_host
+    next_host=$(echo "$next_url" | sed -E 's#https?://([^/]+).*#\1#')
+
+    if [[ "$current_host" != "$next_host" ]]; then
+        return 1
     fi
 
     printf '%s\n' "$next_url"
@@ -1703,6 +1734,7 @@ run_dir_fuzzing() {
         ffuf)
             log_scan "ffuf directory scan (wordlist: $(basename "$wordlist") [${wl_lines} lines], depth: ${RECURSION_DEPTH})"
 
+            local out_json="${result_dir}/web/ffuf_${base_name}.json"
             local -a fuzz_cmd=(ffuf
                 -u "${WEB_CTX_TOOL_URL%/}/FUZZ"
                 -w "$wordlist"
@@ -1715,20 +1747,26 @@ run_dir_fuzzing() {
                 -recursion
                 -recursion-depth "$RECURSION_DEPTH"
                 -recursion-strategy greedy
-                -json
+                -v
                 -noninteractive
                 "${WEB_CTX_FFUF_ARGS[@]}"
-                -e ".${extensions//,/,.}")
+                -e ".${extensions//,/,.}"
+                -o "$out_json"
+                -of json)
             log_command_preview "${fuzz_cmd[@]}"
-            "${fuzz_cmd[@]}" \
-                2>/dev/null | tee "${result_dir}/web/ffuf_${base_name}.json" | while read -r line; do
-                    emit_live_fuzz_hit_once "$live_seen" "$(emit_ffuf_match_line "$line")"
-                done
-            if [[ -f "${result_dir}/web/ffuf_${base_name}.json" ]]; then
+            "${fuzz_cmd[@]}" 2>/dev/null | while read -r line; do
+                # Parsing ffuf -v output: [Status: 200, ...] | http://target/path
+                local pretty
+                pretty=$(echo "$line" | grep -oE '\[Status: [0-9]+.*\] \| https?://[^[:space:]]+')
+                if [[ -n "$pretty" ]]; then
+                    emit_live_fuzz_hit_once "$live_seen" "$pretty"
+                fi
+            done
+            if [[ -f "$out_json" ]]; then
                 local count
-                count=$(awk '/"url"/ {count++} END {print count+0}' "${result_dir}/web/ffuf_${base_name}.json" 2>/dev/null)
+                count=$(grep -c '"url"' "$out_json" 2>/dev/null || echo 0)
                 if (( count > 0 )); then
-                    log_success "ffuf found ${count} results → ${result_dir}/web/ffuf_${base_name}.json"
+                    log_success "ffuf found ${count} results → ${out_json}"
                 else
                     log_info "ffuf found no results"
                 fi
@@ -1787,6 +1825,8 @@ _gobuster_recursive() {
         # Recurse into directories (paths ending with / or 301 redirects)
         local next_url=""
         next_url=$(resolve_gobuster_next_url "$url" "$line")
+        [[ -z "$next_url" ]] && continue
+
         local path_hint
         path_hint=$(echo "$line" | awk '{print $1}')
         if [[ "$path_hint" == */ ]] || [[ "$status" == "301" ]] || [[ "$status" == "302" ]] || [[ "$status" == "307" ]]; then
@@ -2637,6 +2677,11 @@ run_web_recon() {
     run_discovered_domain_enrichment "$ip" "$result_dir"
     dedup_file "$web_ports_file"
 
+    # Modern fast probe across all queued targets (httpx) before per-target dives.
+    if declare -F run_httpx_probe >/dev/null; then
+        run_httpx_probe "$ip" "$result_dir"
+    fi
+
     local processed_targets="${result_dir}/web/.processed_web_targets"
     : > "$processed_targets"
     
@@ -2704,11 +2749,29 @@ run_web_recon() {
         run_api_fuzzing "$current_url" "$ip" "$result_dir" &
         echo -e "    ${DIM}→ API Discovery (bg PID: $!)${NC}"
         local pid_api=$!
-        
+
+        local pid_ctf="" pid_jsmine="" pid_arjun=""
+        if declare -F run_ctf_endpoint_probe >/dev/null; then
+            run_ctf_endpoint_probe "$current_url" "$ip" "$result_dir" &
+            echo -e "    ${DIM}→ CTF/sensitive endpoints (bg PID: $!)${NC}"
+            pid_ctf=$!
+        fi
+        if declare -F mine_js_secrets >/dev/null; then
+            mine_js_secrets "$current_url" "$ip" "$result_dir" &
+            echo -e "    ${DIM}→ Crawl + JS secret mining (bg PID: $!)${NC}"
+            pid_jsmine=$!
+        fi
+        if declare -F run_arjun_params >/dev/null; then
+            run_arjun_params "$current_url" "$ip" "$result_dir" &
+            echo -e "    ${DIM}→ arjun param mining (bg PID: $!)${NC}"
+            pid_arjun=$!
+        fi
+
         # Wait for all wave 3 jobs
         echo ""
         log_info "Waiting for wave 3 jobs..."
-        wait $pid_fuzz $pid_param $pid_src $pid_js $pid_vhost $pid_creds $pid_api 2>/dev/null
+        wait $pid_fuzz $pid_param $pid_src $pid_js $pid_vhost $pid_creds $pid_api \
+             $pid_ctf $pid_jsmine $pid_arjun 2>/dev/null
 
         run_discovered_domain_enrichment "$ip" "$result_dir"
         dedup_file "$web_ports_file"
@@ -2741,6 +2804,16 @@ run_web_recon() {
     
     # CeWL (runs after all URLs processed)
     run_cewl "$ip" "$result_dir"
+
+    # Active XSS scan on discovered param URLs (gated by OffSec-safe mode).
+    if declare -F run_dalfox_xss >/dev/null; then
+        run_dalfox_xss "$ip" "$result_dir"
+    fi
+
+    # Screenshots of every live web target for the report gallery.
+    if declare -F run_web_screenshots >/dev/null; then
+        run_web_screenshots "$ip" "$result_dir"
+    fi
     
     # Wait for all background nikto jobs
     if [[ ${#NIKTO_PIDS[@]} -gt 0 ]]; then

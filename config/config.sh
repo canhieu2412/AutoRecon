@@ -4,10 +4,10 @@
 # ============================================================================
 
 # ── Metadata ──
-APP_VERSION="3.7"
+APP_VERSION="4.0"
 
 # ── Scan Settings ──
-SCAN_METHOD="auto"          # auto | rustscan | masscan | nmap | nmap-single | nc | nc-quick
+SCAN_METHOD="auto"          # auto | rustscan | naabu | masscan | nmap | nmap-single | nc | nc-quick
 SCAN_MODE="normal"          # quick | normal | full
 SCAN_TIMEOUT=120            # Seconds before switching to next scan engine
 NC_PARALLEL=100             # Parallel nc connections
@@ -16,6 +16,7 @@ PORT_CHUNKS=8               # Number of parallel chunks for port scanning
 PARALLEL_MODE=true          # Run service enum & web recon jobs in parallel
 ENUM_MAX_JOBS=8             # Max background enum jobs to avoid self-inflicted overload
 INTERACTIVE=true            # Prompt between phases when running from the menu
+USE_TUI="auto"              # auto | on | off — gum-backed TUI (falls back to classic menu)
 WEB_DISCOVER_HOSTNAMES=true # Try to infer domains/vhosts from IP-based web targets
 AUTO_UPDATE_ETC_HOSTS=true  # Append discovered lab hostnames to /etc/hosts when running as root
 AUTO_RESUME_PIPELINE=true   # Reuse completed phase outputs during full auto runs

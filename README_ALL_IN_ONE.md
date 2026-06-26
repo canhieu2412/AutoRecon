@@ -40,11 +40,21 @@ No uu tien 3 dieu:
 [3] Service Enumeration
 [4] Web Recon
 [5] Vulnerability Scan
+[p] Priv-Esc Handoff   (CVE hints + linpeas/winpeas + GTFOBins)
 [6] Brute / Toolkit
 [s] SQLi Workflows
 [w] Wordlist Toolkit
 [7] Generate Report
 ```
+
+## Moi trong v4.0
+
+- Modern web tooling tu dong neu co cai: `httpx`, `katana`/`gospider`/`hakrawler`, `gowitness` (screenshots), `arjun`, `dalfox` (gated OffSec-safe), `joomscan`. Khong co thi fallback ve tool cu.
+- Port scan them engine `naabu`; `dnsx` loc subdomain con song.
+- Web-CTF: probe endpoint nhay cam (`.git`, `.env`, `flag`, backup, swagger), tu dump `.git` bang `git-dumper`, mine secret trong JS (API key, JWT, private key).
+- Phase moi `[p] Priv-Esc Handoff`: map banner service -> CVE quen thuoc (vsftpd 2.3.4, Samba usermap, Apache traversal, EternalBlue...), sinh cheatsheet linpeas/winpeas/pspy + GTFOBins/LOLBAS.
+- Report them gallery screenshot, section priv-esc, CTF endpoints, JS secrets.
+- **TUI (gum)**: menu + nhap target + dashboard tien do truc tiep. Tu bat khi co `gum`, khong co thi fallback menu text. Cai: `sudo apt install gum`. Ep: `--tui` / `--no-tui`.
 
 ## Thu tu de dung hang ngay
 

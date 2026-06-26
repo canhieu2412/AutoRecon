@@ -24,6 +24,9 @@ PHASE_LAST_ACTION=""
 # ── Source all libraries ──
 source "${SCRIPT_DIR}/lib/colors.sh"
 source "${SCRIPT_DIR}/lib/logger.sh"
+source "${SCRIPT_DIR}/lib/net.sh"
+source "${SCRIPT_DIR}/lib/tools.sh"
+source "${SCRIPT_DIR}/lib/tui.sh"
 source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/config/config.sh"
 source "${SCRIPT_DIR}/config/tool_check.sh"
@@ -37,6 +40,8 @@ source "${SCRIPT_DIR}/modules/04_vuln_scan.sh"
 source "${SCRIPT_DIR}/modules/05_brute_force.sh"
 source "${SCRIPT_DIR}/modules/06_report.sh"
 source "${SCRIPT_DIR}/modules/08_wordlist_toolkit.sh"
+source "${SCRIPT_DIR}/modules/09_privesc.sh"
+source "${SCRIPT_DIR}/modules/10_web_modern.sh"
 
 # ── Cleanup trap (kill background processes on exit/Ctrl+C) ──
 cleanup() {
@@ -66,7 +71,7 @@ trap cleanup EXIT INT TERM
 
 is_supported_scan_method() {
     case "$1" in
-        auto|rustscan|masscan|nmap|nmap-single|nc|nc-quick)
+        auto|rustscan|naabu|masscan|nmap|nmap-single|nc|nc-quick)
             return 0
             ;;
     esac
@@ -226,7 +231,7 @@ apply_engagement_profile() {
 print_usage() {
     cat <<EOF
 Usage:
-  ./auto_recon.sh [--profile PROFILE] [--offsec-safe|--no-offsec-safe] [target]
+  ./auto_recon.sh [--profile PROFILE] [--offsec-safe|--no-offsec-safe] [--tui|--no-tui] [target]
 
 Profiles:
   balanced     Mixed-lab defaults
@@ -235,6 +240,11 @@ Profiles:
   thm          Moderate THM preset
   boot2root    Most aggressive standalone preset
   custom       Keep manual tuning as-is
+
+Interface:
+  --tui        Force the gum-backed TUI (requires: sudo apt install gum)
+  --no-tui     Force the classic text menu
+               (default: auto — TUI when gum is installed and stdout is a TTY)
 EOF
 }
 
@@ -275,7 +285,7 @@ phase_state_status() {
 
 phase_requires_artifacts() {
     case "$1" in
-        port_scan|service_enum|web_recon|vuln_scan|sqlmap_all_in_one|sqlmap_operator|wordlist_toolkit|report)
+        port_scan|service_enum|web_recon|vuln_scan|privesc|sqlmap_all_in_one|sqlmap_operator|wordlist_toolkit|report)
             return 0
             ;;
     esac
@@ -304,6 +314,9 @@ phase_output_ready() {
             ;;
         vuln_scan)
             [[ -s "${result_dir}/vulns/summary.txt" ]]
+            ;;
+        privesc)
+            [[ -s "${result_dir}/privesc/summary.txt" ]]
             ;;
         sqlmap_all_in_one)
             [[ -s "${result_dir}/vulns/sqlmap_all_in_one_summary.txt" ]]
@@ -352,6 +365,7 @@ run_phase_with_state() {
         skip_phase_with_state "$phase" "$title" "$result_dir" "existing output reused"
         PHASE_LAST_ACTION="reused"
         show_phase_digest "$phase" "$result_dir"
+        tui_after_phase "$phase" "$result_dir"
         return 0
     fi
 
@@ -388,6 +402,7 @@ run_phase_with_state() {
         log_warn "${title} ended with status: ${status}"
     fi
 
+    tui_after_phase "$phase" "$result_dir"
     return "$rc"
 }
 
@@ -430,6 +445,12 @@ show_phase_digest() {
         vuln_scan)
             summary_file="${result_dir}/vulns/summary.txt"
             [[ -f "$summary_file" ]] && head -n 60 "$summary_file"
+            ;;
+        privesc)
+            summary_file="${result_dir}/privesc/summary.txt"
+            [[ -f "$summary_file" ]] && head -n 40 "$summary_file"
+            [[ -s "${result_dir}/privesc/cve_hints.txt" ]] && \
+                grep -E '^[[:space:]]*\[' "${result_dir}/privesc/cve_hints.txt" 2>/dev/null | head -n 12
             ;;
         sqlmap_all_in_one)
             summary_file="${result_dir}/vulns/sqlmap_all_in_one_summary.txt"
@@ -823,6 +844,7 @@ EOF
         [[ -f "${RESULT_DIR}/scans/nmap_targeted.nmap" ]] && status+="${GREEN}●${NC} Services "
         [[ -d "${RESULT_DIR}/web" ]] && [[ $(ls "${RESULT_DIR}/web/"*.txt 2>/dev/null | wc -l) -gt 0 ]] && status+="${GREEN}●${NC} Web "
         [[ -f "${RESULT_DIR}/vulns/summary.txt" ]] && status+="${GREEN}●${NC} Vulns "
+        [[ -f "${RESULT_DIR}/privesc/summary.txt" ]] && status+="${GREEN}●${NC} PrivEsc "
         [[ -f "${RESULT_DIR}/vulns/sqlmap_all_in_one_summary.txt" || -f "${RESULT_DIR}/vulns/sqlmap_operator_summary.txt" ]] && status+="${GREEN}●${NC} SQLi "
         [[ -f "${RESULT_DIR}/toolkit/credential_cache.tsv" || -f "${RESULT_DIR}/toolkit/sessions/generated_commands.txt" ]] && status+="${GREEN}●${NC} Toolkit "
         [[ -f "${RESULT_DIR}/wordlists/summary.txt" || -f "${RESULT_DIR}/wordlists/custom_all.txt" ]] && status+="${GREEN}●${NC} Words "
@@ -841,6 +863,7 @@ EOF
     echo -e "  ${CYAN}[3]${NC} 🔧 Service Enumeration ${DIM}(auto-detect services)${NC}"
     echo -e "  ${CYAN}[4]${NC} 🌐 Web Recon           ${DIM}(fuzz depth: ${RECURSION_DEPTH})${NC}"
     echo -e "  ${CYAN}[5]${NC} ⚠️  Vulnerability Scan  ${DIM}(nmap + searchsploit)${NC}"
+    echo -e "  ${CYAN}[p]${NC} 🪜 Priv-Esc Handoff    ${DIM}(CVE hints + linpeas/winpeas + GTFOBins)${NC}"
     echo -e "  ${CYAN}[6]${NC} 🔑 Brute / Toolkit     ${DIM}(hydra + operator toolkit, $([ "$AUTO_BRUTE" = true ] && echo "${GREEN}ON${NC}" || echo "${RED}OFF${NC}"))${NC}"
     echo -e "  ${CYAN}[s]${NC} 🧪 SQLi Workflows      ${DIM}(SQLMap all-in-one + operator)${NC}"
     echo -e "  ${CYAN}[w]${NC} 🧬 Wordlist Toolkit    ${DIM}(CeWL + target seeds + crunch + rsmangler)${NC}"
@@ -857,7 +880,44 @@ EOF
     echo -e "  ${CYAN}[0]${NC} ❌ Exit"
     echo ""
     echo -e "${DIM}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -ne "  ${BOLD}Choose [0-9/s/w/t/c]:${NC} "
+    echo -ne "  ${BOLD}Choose [0-9/s/w/p/t/c]:${NC} "
+}
+
+# gum-backed main menu. Echoes a single choice token compatible with the
+# existing dispatch case (1-9, p, s, w, t, c, 0).
+tui_main_menu() {
+    clear
+    local subtitle="No target set"
+    if [[ -n "$TARGET" ]]; then
+        local done_marks=""
+        [[ -f "${RESULT_DIR}/scans/open_ports.txt" ]] && done_marks+="ports "
+        [[ -f "${RESULT_DIR}/scans/nmap_targeted.nmap" ]] && done_marks+="services "
+        [[ -f "${RESULT_DIR}/vulns/summary.txt" ]] && done_marks+="vulns "
+        [[ -f "${RESULT_DIR}/privesc/summary.txt" ]] && done_marks+="privesc "
+        [[ -f "${RESULT_DIR}/report.md" ]] && done_marks+="report "
+        subtitle="${TARGET_DISPLAY:-$TARGET} (${TARGET_TYPE}) | $(engagement_profile_label "${ENGAGEMENT_PROFILE:-balanced}")${done_marks:+ | done: ${done_marks}}"
+    fi
+    tui_header "Auto Recon v${APP_VERSION:-4.0}" "$subtitle" >&2
+
+    local sel
+    sel=$(tui_choose "Choose an action" \
+        "1  🚀 Full Auto Scan" \
+        "2  🔌 Port Scan" \
+        "3  🔧 Service Enumeration" \
+        "4  🌐 Web Recon" \
+        "5  ⚠️  Vulnerability Scan" \
+        "p  🪜 Priv-Esc Handoff" \
+        "6  🔑 Brute / Toolkit" \
+        "s  🧪 SQLi Workflows" \
+        "w  🧬 Wordlist Toolkit" \
+        "7  📄 Generate Report" \
+        "8  📂 View Results" \
+        "9  ⚙️  Settings" \
+        "t  🎯 Change Target" \
+        "c  🔍 Check Tools" \
+        "0  ❌ Exit")
+    # Token = first whitespace-delimited field.
+    printf '%s\n' "${sel%%[[:space:]]*}"
 }
 
 draw_settings_menu() {
@@ -983,9 +1043,13 @@ configure_target() {
 # ── Set Target ──
 set_target() {
     echo ""
-    echo -ne "  ${BOLD}Enter target (IP / CIDR / file / domain):${NC} "
-    read -r input_target
-    
+    if tui_enabled; then
+        input_target=$(tui_input "Enter target (IP / CIDR / file / domain)" "")
+    else
+        echo -ne "  ${BOLD}Enter target (IP / CIDR / file / domain):${NC} "
+        read -r input_target
+    fi
+
     if [[ -z "$input_target" ]]; then
         echo -e "  ${RED}No target entered.${NC}"
         sleep 1
@@ -1286,7 +1350,9 @@ run_full_auto() {
     local previous_target_domain="$TARGET_DOMAIN"
     local previous_target_label="$TARGET_LABEL"
     local previous_target_display="$TARGET_DISPLAY"
+    local previous_live_tracker="${TUI_LIVE_TRACKER:-0}"
     INTERACTIVE=false
+    TUI_LIVE_TRACKER=1
     
     clear
     echo -e "${BOLD}${GREEN}"
@@ -1343,6 +1409,10 @@ run_full_auto() {
     echo -e "  ${DIM}Results: ${RESULT_DIR}${NC}"
     echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+    if [[ "$TARGET_TYPE" != "cidr" && "$TARGET_TYPE" != "file" ]]; then
+        tui_pipeline_overview "$RESULT_DIR"
+    fi
+    TUI_LIVE_TRACKER="$previous_live_tracker"
     INTERACTIVE="$previous_interactive"
     TARGET_INPUT="$previous_target_input"
     TARGET_DOMAIN="$previous_target_domain"
@@ -1390,6 +1460,9 @@ _run_single_pipeline() {
     fi
 
     run_phase_with_state "vuln_scan" "Vulnerability Scan" "$ip" "$result_dir" run_vuln_scan "$ip" "$result_dir"
+    [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
+
+    run_phase_with_state "privesc" "Privilege Escalation Handoff" "$ip" "$result_dir" run_privesc "$ip" "$result_dir"
     [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
 
     if [[ "$AUTO_BRUTE" == "true" || "$AUTO_BRUTE" == "interactive" ]]; then
@@ -1440,6 +1513,14 @@ main() {
                 [[ "${ENGAGEMENT_PROFILE}" == "offsec-lab" ]] && ENGAGEMENT_PROFILE="custom"
                 shift
                 ;;
+            --tui)
+                USE_TUI="on"
+                shift
+                ;;
+            --no-tui)
+                USE_TUI="off"
+                shift
+                ;;
             --help|-h)
                 print_usage
                 return 0
@@ -1481,9 +1562,13 @@ main() {
     
     # Main menu loop
     while true; do
-        draw_main_menu
-        read -r choice
-        
+        if tui_enabled; then
+            choice=$(tui_main_menu)
+        else
+            draw_main_menu
+            read -r choice
+        fi
+
         case "$choice" in
             1) run_full_auto ;;
             2)
@@ -1520,6 +1605,18 @@ main() {
                     continue
                 fi
                 run_phase_explicit "vuln_scan" "Vulnerability Scan" "$TARGET" "$RESULT_DIR" run_vuln_scan "$TARGET" "$RESULT_DIR"
+                ;;
+            p|P)
+                require_target || continue
+                clear
+                if [[ ! -f "${RESULT_DIR}/scans/nmap_targeted.nmap" ]]; then
+                    echo -e "  ${YELLOW}⚠ Run Service Enumeration first (option 3) for accurate CVE hints${NC}"
+                    sleep 2
+                fi
+                run_phase_explicit "privesc" "Privilege Escalation Handoff" "$TARGET" "$RESULT_DIR" run_privesc "$TARGET" "$RESULT_DIR"
+                echo ""
+                echo -e "  ${YELLOW}Press Enter to continue...${NC}"
+                read -r
                 ;;
             6)
                 require_target || continue

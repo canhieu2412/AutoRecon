@@ -194,6 +194,40 @@ scan_rustscan() {
     return 1
 }
 
+# ── Naabu (ProjectDiscovery fast SYN/CONNECT scanner) ──
+scan_naabu() {
+    local ip="$1"
+    local result_dir="$2"
+
+    if ! command -v naabu &>/dev/null; then
+        return 1
+    fi
+
+    log_scan "Engine: naabu (timeout: ${SCAN_TIMEOUT}s)..."
+    local output
+    # -p - = all ports when full scan; otherwise naabu's default top ports.
+    local -a naabu_cmd=(timeout "$SCAN_TIMEOUT" naabu -host "$ip" -silent -no-color)
+    is_quick_scan || naabu_cmd+=(-p -)
+    log_command_preview "${naabu_cmd[@]}"
+    output=$("${naabu_cmd[@]}" 2>/dev/null)
+    local rc=$?
+
+    [[ $rc -eq 124 ]] && { log_warn "naabu timed out"; return 1; }
+
+    local ports
+    ports=$(echo "$output" | grep -oP ':\K\d+' | sort -un | tr '\n' ',' | sed 's/,$//')
+
+    if [[ -n "$ports" ]]; then
+        echo "$ports" > "${result_dir}/scans/open_ports.txt"
+        echo "naabu" > "${result_dir}/scans/scan_method.txt"
+        log_success "naabu found: ${ports}"
+        return 0
+    fi
+
+    log_warn "naabu returned no results"
+    return 1
+}
+
 # ── Simple NC Scan (top ports only) ──
 scan_nc_simple() {
     local ip="$1"
@@ -489,6 +523,8 @@ run_port_scan() {
         case "$SCAN_METHOD" in
             rustscan)
                 scan_rustscan "$ip" "$result_dir" && success=0 ;;
+            naabu)
+                scan_naabu "$ip" "$result_dir" && success=0 ;;
             masscan)
                 scan_masscan "$ip" "$result_dir" && success=0 ;;
             nmap)
@@ -507,6 +543,7 @@ run_port_scan() {
                 else
                     # Auto rotation: fastest to slowest
                     scan_rustscan "$ip" "$result_dir" && success=0
+                    [[ $success -ne 0 ]] && scan_naabu "$ip" "$result_dir" && success=0
                     [[ $success -ne 0 ]] && scan_masscan "$ip" "$result_dir" && success=0
                     [[ $success -ne 0 ]] && scan_nmap_chunked "$ip" "$result_dir" && success=0
                     [[ $success -ne 0 ]] && scan_nc_full "$ip" "$result_dir" && success=0
