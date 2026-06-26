@@ -1,4 +1,4 @@
-# Auto Recon v3.7
+# Auto Recon v4.1
 
 **Author:** Canhieu  
 **Type:** Bash-based reconnaissance automation framework  
