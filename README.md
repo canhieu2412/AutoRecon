@@ -51,7 +51,7 @@ chmod +x auto_recon.sh
 2. Chạy tool:
 
 ```bash
-./auto_recon.sh
+sudo ./auto_recon.sh
 ```
 
 3. Trong menu chính, bấm:
