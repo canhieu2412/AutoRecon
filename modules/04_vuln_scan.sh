@@ -573,39 +573,60 @@ run_vuln_scan() {
         [[ -f "$cms_paths" ]] && cat "$cms_paths" >> "$targets_file"
         dedup_file "$targets_file"
         
+        # Severities come from config (default includes info+low for fullest recon).
+        local nuclei_sev="${NUCLEI_SEVERITY:-info,low,medium,high,critical}"
+        local -a nuclei_extra=(); [[ -n "${NUCLEI_EXTRA_FLAGS:-}" ]] && read -r -a nuclei_extra <<< "$NUCLEI_EXTRA_FLAGS"
+        log_info "Nuclei severities: ${BOLD}${nuclei_sev}${NC}"
+
         if [[ -s "$targets_file" ]]; then
             local target_count
             target_count=$(wc -l < "$targets_file" 2>/dev/null || echo 0)
             log_scan "Nuclei scanning ${target_count} web target(s)..."
+            # -as = auto-select templates by detected tech; -stats keeps it lively.
             local -a nuclei_web_cmd=(timeout "$TOOL_TIMEOUT" nuclei -l "$targets_file"
-                -as -severity low,medium,high,critical
-                -silent -nc
+                -as -severity "$nuclei_sev"
+                -silent -nc "${nuclei_extra[@]}"
                 -o "${result_dir}/vulns/nuclei_web.txt")
             log_command_preview "${nuclei_web_cmd[@]}"
             "${nuclei_web_cmd[@]}" 2>/dev/null
         fi
         rm -f "$targets_file"
-        
-        # Scan all ports with network templates
+
+        # Scan all ports with network templates (same severity set)
         log_scan "Nuclei network scan on ${ip}..."
         local -a nuclei_network_cmd=(timeout "$TOOL_TIMEOUT" nuclei -u "$ip"
-            -t network/ -severity medium,high,critical
-            -silent -nc
+            -t network/ -severity "$nuclei_sev"
+            -silent -nc "${nuclei_extra[@]}"
             -o "${result_dir}/vulns/nuclei_network.txt")
         log_command_preview "${nuclei_network_cmd[@]}"
         "${nuclei_network_cmd[@]}" 2>/dev/null
-        
-        # Show nuclei findings
-        for nf in "${result_dir}/vulns/nuclei_"*.txt; do
-            [[ ! -f "$nf" ]] && continue
-            local count=$(wc -l < "$nf" 2>/dev/null || echo 0)
-            if [[ $count -gt 0 ]]; then
-                log_success "Nuclei found ${count} vulnerabilities!"
-                cat "$nf" | while read -r finding; do
-                    print_found "NUCLEI: $finding"
-                done
-            fi
-        done
+
+        # Merge, de-dupe and prioritise output by severity so critical/high are
+        # never buried under info noise. Nuclei lines look like: [id] [proto] [sev] url
+        local nuclei_all="${result_dir}/vulns/nuclei_all.txt"
+        cat "${result_dir}/vulns/nuclei_web.txt" "${result_dir}/vulns/nuclei_network.txt" 2>/dev/null \
+            | awk 'NF' | sort -u > "$nuclei_all"
+        if [[ -s "$nuclei_all" ]]; then
+            local total; total=$(wc -l < "$nuclei_all")
+            log_success "Nuclei found ${total} finding(s) — by severity:"
+            local sev c
+            for sev in critical high medium low info unknown; do
+                c=$(grep -icE "\[${sev}\]" "$nuclei_all" 2>/dev/null || echo 0)
+                (( c > 0 )) && printf '    %-9s %s\n' "${sev}:" "$c"
+            done
+            # Surface the actionable ones inline; info stays in the file.
+            local shown=0
+            for sev in critical high medium; do
+                while IFS= read -r finding; do
+                    [[ -z "$finding" ]] && continue
+                    print_found "NUCLEI[${sev}]: $finding"
+                    shown=$((shown+1))
+                done < <(grep -iE "\[${sev}\]" "$nuclei_all" 2>/dev/null)
+            done
+            (( shown == 0 )) && log_info "Only low/info findings — see $(basename "$nuclei_all") for the full list."
+        else
+            log_info "Nuclei produced no findings for the selected severities."
+        fi
     else
         log_info "nuclei not installed (skipping)"
     fi

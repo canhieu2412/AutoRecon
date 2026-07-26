@@ -16,6 +16,11 @@
 
 set -o pipefail
 
+# Robustness: if the parent shell exported core utilities as functions (some
+# managed shells wrap grep/sed/awk/… and can hang or alter output), drop those
+# shadows so we always use the real binaries. No-op in a normal shell.
+unset -f grep egrep fgrep sed awk cat head tail sort uniq wc cut tr find xargs 2>/dev/null || true
+
 # Get script directory (resolve symlinks so it can be run globally via /usr/local/bin)
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 MAIN_PID=$BASHPID

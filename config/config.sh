@@ -32,6 +32,13 @@ FUZZ_THREADS=75             # Fuzzing threads
 WEB_FUZZ_TOOL="auto"        # auto | feroxbuster | gobuster | ffuf
 FUZZ_EXTENSIONS="php,html,txt,bak,old,conf,zip,tar.gz,asp,aspx,jsp,py,sh,xml,json,log,sql,db"
 
+# ── Nuclei (modern vuln scanner) ──
+# Severities to include. For lab/HTB recon, keeping info+low surfaces exposed
+# .git/.env/backups, login panels, tech versions and takeover leads — output is
+# sorted by severity so critical/high stay on top. Trim to reduce noise/time.
+NUCLEI_SEVERITY="info,low,medium,high,critical"  # or: low,medium,high,critical | medium,high,critical | high,critical
+NUCLEI_EXTRA_FLAGS=""       # extra nuclei flags, e.g. "-rl 150 -c 40 -etags fuzz"
+
 # ── Reporting ──
 REPORT_PREVIEW_LINES=80     # Default preview lines for large artifacts in reports
 REPORT_FINDING_LIMIT=100    # Cap per-artifact findings in markdown report
