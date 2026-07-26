@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Auto Recon{% endblock %} · Auto Recon</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛰️</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="dot mono">◉</span>
+      <div>
+        <h1>Auto Recon</h1>
+        <span class="sub">web console · localhost</span>
+      </div>
+    </div>
+    <div class="right">
+      <a href="/" class="chip" id="jobBadge" style="display:none;text-decoration:none"></a>
+      <span class="chip">127.0.0.1:2412</span>
+      <button class="toggle" id="themeBtn" aria-label="Toggle theme"><span id="themeIcon">◐</span> <span id="themeLbl">Theme</span></button>
+    </div>
+  </header>
+
+  <nav class="side">
+    {% set active = active|default('') %}
+    <a href="/" class="{{ 'active' if active=='dashboard' }}">🏠 Dashboard</a>
+    <a href="/results" class="{{ 'active' if active=='results' }}">📂 Results</a>
+    <a href="/shell" class="{{ 'active' if active=='shell' }}">🐚 Shell Console</a>
+    <a href="/settings" class="{{ 'active' if active=='settings' }}">⚙️ Settings</a>
+
+    <div class="grp">Phases</div>
+    <a href="/phase/full-auto">🚀 Full Auto</a>
+    <a href="/phase/port_scan">🔌 Port Scan</a>
+    <a href="/phase/service_enum">🔧 Service Enum</a>
+    <a href="/phase/web_recon">🌐 Web Recon</a>
+    <a href="/phase/vuln_scan">⚠️ Vuln Scan</a>
+    <a href="/phase/next_steps">🗺️ Next-Steps</a>
+    <a href="/phase/privesc">🪜 Priv-Esc</a>
+    <a href="/phase/ad_enum">🏰 AD Attack</a>
+    <a href="/phase/pivot">🌉 Pivot</a>
+    <a href="/phase/wordlist">🧬 Wordlist</a>
+    <a href="/phase/brute">🔑 Brute</a>
+    <a href="/phase/report">📄 Report</a>
+  </nav>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<div id="toasts" class="toasts"></div>
+<script src="/static/app.js"></script>
+{% block script %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Results{% endblock %}
+{% block content %}
+{% set active = 'results' %}
+<h2 class="h">Results</h2>
+<p class="lead">Every scan writes to <code>results/&lt;target&gt;/</code>. Pick a target for its summary, report and artifacts.</p>
+
+<div class="grid2">
+  <div class="card"><div class="pad">
+    <p class="eyebrow" style="margin-top:0">Targets</p>
+    <input class="search" id="targetSearch" placeholder="filter targets…">
+    {% if targets %}
+    <ul class="filetree" id="targets">
+      {% for t in targets %}
+      <li data-target="{{ t.name }}"><span>{{ t.name }}{% if t.has_report %} 📄{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">No results yet — run a scan.</p>{% endif %}
+  </div></div>
+
+  <div>
+    <div id="summary"></div>
+    <div class="card"><div class="pad">
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn" id="tabFiles">Files</button>
+        <button class="btn" id="tabReport">Report</button>
+        <a class="btn" id="reportBtn" style="display:none" target="_blank">↗ Open report</a>
+      </div>
+      <div id="filesPane">
+        <div class="row" style="gap:16px;align-items:flex-start">
+          <div style="flex:0 0 240px">
+            <input class="search" id="fileSearch" placeholder="filter files…">
+            <ul class="filetree" id="files"></ul>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button class="btn" id="copyFile" style="display:none">⧉ Copy</button></div>
+            <pre class="view" id="fileView">Select a target, then a file.</pre>
+          </div>
+        </div>
+      </div>
+      <div id="reportPane" style="display:none">
+        <iframe class="report" id="reportFrame" title="report"></iframe>
+      </div>
+    </div></div>
+  </div>
+</div>
+{% endblock %}
+{% block script %}
+<script>
+let curTarget = null, allFiles = [];
+const SEV = { CRITICAL: 'var(--crit)', HIGH: 'var(--high)', MEDIUM: 'var(--med)', LOW: 'var(--low)', INFO: 'var(--info)' };
+
+async function loadTarget(name) {
+  curTarget = name;
+  document.querySelectorAll('#targets li').forEach(li => li.classList.toggle('active', li.dataset.target === name));
+  const rb = document.getElementById('reportBtn');
+  rb.style.display = 'inline-flex'; rb.href = '/api/targets/' + encodeURIComponent(name) + '/report';
+  await Promise.all([loadSummary(name), loadFiles(name)]);
+  showFiles();
+}
+
+async function loadSummary(name) {
+  const el = document.getElementById('summary');
+  try {
+    const s = await api('/api/targets/' + encodeURIComponent(name) + '/summary');
+    const total = Object.values(s.severity).reduce((a, b) => a + b, 0);
+    let kpis = s.kpis.slice(0, 4).map(k =>
+      `<div class="kpi"><div class="label">${k.label}</div><div class="num">${(k.value || '').split(' ')[0]}</div></div>`).join('');
+    let sevbar = '', leg = '';
+    if (total > 0) {
+      sevbar = '<div class="sevbar">' + Object.entries(s.severity).map(([k, v]) =>
+        v ? `<span style="flex:${v};background:${SEV[k]}"></span>` : '').join('') + '</div>';
+      leg = '<div class="sevleg">' + Object.entries(s.severity).map(([k, v]) =>
+        v ? `<span><i style="background:${SEV[k]}"></i>${v} ${k[0] + k.slice(1).toLowerCase()}</span>` : '').join('') + '</div>';
+    }
+    el.innerHTML = (kpis ? `<div class="kpis">${kpis}</div>` : '') +
+      (sevbar ? `<div class="card"><div class="pad"><p class="eyebrow" style="margin-top:0">Findings</p>${sevbar}${leg}</div></div>` : '') ||
+      '<div class="card"><div class="pad"><p class="empty">No report.md yet — run the report phase.</p></div></div>';
+  } catch (e) { el.innerHTML = ''; }
+}
+
+async function loadFiles(name) {
+  const { files } = await api('/api/targets/' + encodeURIComponent(name) + '/files');
+  allFiles = files; renderFiles('');
+  document.getElementById('fileView').textContent = 'Select a file.';
+  document.getElementById('copyFile').style.display = 'none';
+}
+function renderFiles(filter) {
+  const ul = document.getElementById('files');
+  const list = allFiles.filter(f => !filter || f.path.toLowerCase().includes(filter.toLowerCase()));
+  ul.innerHTML = list.map(f => `<li data-path="${f.path}"><span>${f.path}</span><span class="sz">${f.size}</span></li>`).join('')
+    || '<li class="faint">no match</li>';
+  ul.querySelectorAll('li[data-path]').forEach(li => li.addEventListener('click', () => loadFile(li.dataset.path, li)));
+}
+async function loadFile(path, li) {
+  document.querySelectorAll('#files li').forEach(x => x.classList.remove('active'));
+  if (li) li.classList.add('active');
+  try {
+    const txt = await api('/api/targets/' + encodeURIComponent(curTarget) + '/file?path=' + encodeURIComponent(path));
+    const view = document.getElementById('fileView'); view.textContent = txt;
+    const cp = document.getElementById('copyFile'); cp.style.display = 'inline-flex'; cp.onclick = () => copyText(txt);
+  } catch (e) { document.getElementById('fileView').textContent = '[' + e.message + ']'; }
+}
+
+function showFiles() { document.getElementById('filesPane').style.display = ''; document.getElementById('reportPane').style.display = 'none'; }
+function showReport() {
+  document.getElementById('filesPane').style.display = 'none';
+  document.getElementById('reportPane').style.display = '';
+  document.getElementById('reportFrame').src = '/api/targets/' + encodeURIComponent(curTarget) + '/report';
+}
+document.getElementById('tabFiles').addEventListener('click', showFiles);
+document.getElementById('tabReport').addEventListener('click', showReport);
+document.getElementById('fileSearch').addEventListener('input', e => renderFiles(e.target.value));
+document.getElementById('targetSearch').addEventListener('input', function (e) {
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll('#targets li').forEach(li => li.style.display = li.dataset.target.toLowerCase().includes(q) ? '' : 'none');
+});
+document.querySelectorAll('#targets li').forEach(li => li.addEventListener('click', () => loadTarget(li.dataset.target)));
+{% if preselect %}loadTarget("{{ preselect }}");{% elif targets %}loadTarget("{{ targets[0].name }}");{% endif %}
+</script>
+{% endblock %}

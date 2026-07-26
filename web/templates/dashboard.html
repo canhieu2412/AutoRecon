@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+{% set active = 'dashboard' %}
+<h2 class="h">New Scan</h2>
+<p class="lead">Point Auto Recon at a lab target. Runs the same engine as the CLI — output streams live.</p>
+
+<div class="grid2">
+  <div class="card"><div class="pad">
+    <form id="scanForm">
+      <div class="field">
+        <label class="f" for="target">Target</label>
+        <input id="target" name="target" placeholder="10.10.10.10  /  10.10.10.0/24  /  box.htb" autocomplete="off" required>
+      </div>
+      <div id="history" style="margin:-4px 0 12px"></div>
+      <div class="field-row">
+        <div class="field">
+          <label class="f" for="profile">Profile</label>
+          <select id="profile" name="profile">
+            {% for p in profiles %}<option value="{{ p }}" {{ 'selected' if p=='htb' }}>{{ p }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label class="f" for="action">Action</label>
+          <select id="action" name="action">
+            <option value="full-auto">Full Auto (all phases)</option>
+            <option value="port_scan">Port Scan</option>
+            <option value="service_enum">Service Enum</option>
+            <option value="web_recon">Web Recon</option>
+            <option value="vuln_scan">Vuln Scan</option>
+            <option value="next_steps">Next-Steps</option>
+            <option value="privesc">Priv-Esc</option>
+            <option value="ad_enum">AD Attack</option>
+            <option value="pivot">Pivot</option>
+            <option value="report">Report</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label class="f"><input type="checkbox" id="safe" name="safe_mode" style="width:auto;margin-right:8px">OSCP-safe mode (disable sqlmap/nuclei/dalfox/auto-spray)</label>
+      </div>
+
+      <details style="margin:2px 0 14px">
+        <summary class="mono" style="cursor:pointer;color:var(--muted);font-size:.82rem">⚙ Advanced options (this scan only)</summary>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="f">Port engine</label>
+            <select id="cfg_SCAN_METHOD"><option value="">default</option>
+              <option>auto</option><option>rustscan</option><option>naabu</option><option>masscan</option><option>nmap</option><option>nc</option></select></div>
+          <div class="field"><label class="f">Scan depth</label>
+            <select id="cfg_SCAN_MODE"><option value="">default</option><option>quick</option><option>normal</option><option>full</option></select></div>
+          <div class="field"><label class="f">Web fuzzer</label>
+            <select id="cfg_WEB_FUZZ_TOOL"><option value="">default</option><option>auto</option><option>feroxbuster</option><option>gobuster</option><option>ffuf</option></select></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label class="f">Threads</label><input type="number" id="cfg_THREADS" placeholder="default"></div>
+          <div class="field"><label class="f">Port chunks</label><input type="number" id="cfg_PORT_CHUNKS" placeholder="default"></div>
+          <div class="field"><label class="f">Fuzz recursion</label><input type="number" id="cfg_RECURSION_DEPTH" placeholder="default"></div>
+        </div>
+        <p class="faint mono" style="font-size:.74rem;margin:0">Blank = use the saved default. Persist defaults on the <a href="/settings">Settings</a> page.</p>
+      </details>
+
+      <button class="btn primary" type="submit">▶ Launch scan</button>
+      <span id="err" style="color:var(--crit);font-family:var(--mono);font-size:.8rem;margin-left:12px"></span>
+    </form>
+  </div></div>
+
+  <div class="card"><div class="pad">
+    <p class="eyebrow" style="margin-top:0">Active &amp; recent jobs</p>
+    <div id="jobs"><p class="empty">No jobs yet.</p></div>
+  </div></div>
+</div>
+{% endblock %}
+{% block script %}
+<script>
+// ---- target history (localStorage) ----
+function getHist() { try { return JSON.parse(localStorage.getItem('ar_hist') || '[]'); } catch (e) { return []; } }
+function pushHist(t) {
+  let h = getHist().filter(x => x !== t); h.unshift(t); h = h.slice(0, 8);
+  localStorage.setItem('ar_hist', JSON.stringify(h)); renderHist();
+}
+function renderHist() {
+  const h = getHist(), el = document.getElementById('history');
+  el.innerHTML = h.length ? h.map(t => `<span class="tag-hist" data-t="${t}">↻ ${t}</span>`).join('') : '';
+  el.querySelectorAll('.tag-hist').forEach(s => s.addEventListener('click', () => { document.getElementById('target').value = s.dataset.t; }));
+}
+
+// ---- collect advanced per-scan config overrides ----
+function advConfig() {
+  const cfg = Object.assign({}, configOverrides());  // session defaults from Settings
+  document.querySelectorAll('[id^="cfg_"]').forEach(el => { if (el.value !== '') cfg[el.id.slice(4)] = el.value; });
+  return cfg;
+}
+
+const form = document.getElementById('scanForm');
+form.addEventListener('submit', async function (e) {
+  e.preventDefault();
+  document.getElementById('err').textContent = '';
+  const target = document.getElementById('target').value.trim();
+  const body = {
+    target: target,
+    profile: document.getElementById('profile').value,
+    action: document.getElementById('action').value,
+    safe_mode: document.getElementById('safe').checked,
+    config: advConfig(),
+  };
+  try {
+    const r = await api('/api/scan', { method: 'POST', body: JSON.stringify(body) });
+    pushHist(target);
+    toast('Scan launched: ' + target, 'ok');
+    location.href = '/scan/' + r.job_id;
+  } catch (err) { document.getElementById('err').textContent = err.message; toast(err.message, 'err'); }
+});
+
+async function refreshJobs() {
+  try {
+    const { jobs } = await api('/api/jobs');
+    const el = document.getElementById('jobs');
+    if (!jobs.length) { el.innerHTML = '<p class="empty">No jobs yet.</p>'; return; }
+    el.innerHTML = jobs.slice(0, 12).map(j =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border-soft)">
+        <a href="/scan/${j.id}" class="mono" style="font-size:.82rem">${j.target} · ${j.action}</a>
+        <span class="pill st-${j.status}">${j.status}</span></div>`).join('');
+  } catch (e) {}
+}
+renderHist(); refreshJobs(); setInterval(refreshJobs, 3000);
+</script>
+{% endblock %}

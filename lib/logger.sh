@@ -45,7 +45,9 @@ log_command_preview() {
     local timestamp
     preview=$(format_command_preview "$@")
     timestamp=$(date '+%H:%M:%S')
-    echo -e "  ${DIM}Command: ${preview}${NC}"
+    # Print to stderr so the command stays visible even when a caller redirects
+    # stdout (e.g. `>/dev/null` or `$(...)` capture). Mirrors to the live terminal.
+    echo -e "  ${CYAN}❯ Command:${NC} ${DIM}${preview}${NC}" >&2
     [[ -n "$LOG_FILE" ]] && echo "[${timestamp}] [CMD] ${preview}" >> "$LOG_FILE"
     # Collect every executed command into a copy-paste-ready PoC file per target
     # so it can be dropped straight into a report / exam write-up.

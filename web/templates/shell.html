@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Shell Console{% endblock %}
+{% block content %}
+{% set active = 'shell' %}
+<h2 class="h">Reverse-Shell Console</h2>
+<p class="lead">Catch a reverse shell and move files both ways — transfers ride inside the shell (base64),
+no second listener needed. <span class="faint">Authorized labs only.</span></p>
+
+<div class="row" style="margin-bottom:14px;align-items:center">
+  <input id="port" value="4444" style="width:110px" title="listen port">
+  <button class="btn primary" id="listenBtn">🎧 Start listener</button>
+  <span class="pill st-queued" id="shStatus">idle</span>
+</div>
+
+<div class="grid2">
+  <div class="card"><div class="pad" style="padding-bottom:12px">
+    <p class="eyebrow" style="margin-top:0">● Session</p>
+    <div class="term" id="term" style="height:52vh"></div>
+    <div class="row" style="margin-top:10px;gap:8px">
+      <input id="cmd" placeholder="shell command…  (Enter to send)" style="flex:1">
+      <button class="btn" id="sendBtn">Send</button>
+    </div>
+  </div></div>
+
+  <aside>
+    <div class="card"><div class="pad">
+      <p class="eyebrow" style="margin-top:0">▲ Upload to target</p>
+      <div class="field"><input type="file" id="upFile"></div>
+      <div class="field"><input id="upRemote" placeholder="remote dest (e.g. /tmp/lp.sh)"></div>
+      <button class="btn" id="upBtn">Upload → target</button>
+    </div></div>
+    <div class="card"><div class="pad">
+      <p class="eyebrow" style="margin-top:0">▼ Download from target</p>
+      <div class="field"><input id="dlRemote" placeholder="remote file (e.g. /etc/passwd)"></div>
+      <button class="btn" id="dlBtn">Download ← target</button>
+    </div></div>
+    <div class="card"><div class="pad">
+      <p class="eyebrow" style="margin-top:0">Transfer status</p>
+      <div id="xfer" class="mono faint" style="font-size:.8rem">idle</div>
+    </div></div>
+  </aside>
+</div>
+{% endblock %}
+{% block script %}
+<script>
+const term = document.getElementById('term');
+let ws = null;
+function append(line, cls) {
+  const s = document.createElement('span'); s.className = 'l ' + (cls || logClass(line)); s.textContent = line;
+  term.appendChild(s); term.scrollTop = term.scrollHeight;
+}
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/shell');
+  ws.onmessage = e => append(e.data);
+  ws.onclose = () => append('[*] console disconnected', 'warn');
+}
+async function refresh() {
+  try {
+    const s = await api('/api/shell/status');
+    const el = document.getElementById('shStatus');
+    if (s.connected) { el.textContent = 'connected ' + (s.peer || ''); el.className = 'pill st-done'; }
+    else if (s.listening) { el.textContent = 'listening :' + s.port; el.className = 'pill st-running'; }
+    else { el.textContent = 'idle'; el.className = 'pill st-queued'; }
+  } catch (e) {}
+}
+document.getElementById('listenBtn').addEventListener('click', async function () {
+  try {
+    await api('/api/shell/listen', { method: 'POST', body: JSON.stringify({ port: parseInt(document.getElementById('port').value) }) });
+    if (!ws || ws.readyState > 1) connectWs();
+    refresh();
+  } catch (e) { append('[!] ' + e.message, 'err'); }
+});
+function send() {
+  const c = document.getElementById('cmd');
+  if (!c.value) return;
+  if (ws && ws.readyState === 1) { ws.send(c.value); c.value = ''; }
+  else append('[!] not connected — start the listener first', 'err');
+}
+document.getElementById('sendBtn').addEventListener('click', send);
+document.getElementById('cmd').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+document.getElementById('upBtn').addEventListener('click', async function () {
+  const f = document.getElementById('upFile').files[0];
+  const remote = document.getElementById('upRemote').value.trim();
+  const x = document.getElementById('xfer');
+  if (!f || !remote) { x.textContent = 'need a file and a remote path'; return; }
+  x.textContent = 'uploading ' + f.name + ' …';
+  const fd = new FormData(); fd.append('file', f); fd.append('remote_path', remote);
+  try {
+    const r = await fetch('/api/shell/upload', { method: 'POST', body: fd });
+    const j = await r.json(); x.textContent = (j.message || (j.detail || 'error'));
+  } catch (e) { x.textContent = e.message; }
+});
+document.getElementById('dlBtn').addEventListener('click', async function () {
+  const remote = document.getElementById('dlRemote').value.trim();
+  const x = document.getElementById('xfer');
+  if (!remote) { x.textContent = 'need a remote path'; return; }
+  x.textContent = 'downloading ' + remote + ' …';
+  try {
+    const j = await api('/api/shell/download', { method: 'POST', body: JSON.stringify({ remote_path: remote }) });
+    x.textContent = j.message + (j.local ? ('  → ' + j.local) : '');
+  } catch (e) { x.textContent = e.message; }
+});
+
+connectWs(); refresh(); setInterval(refresh, 2500);
+</script>
+{% endblock %}

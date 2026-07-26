@@ -83,11 +83,23 @@ run_timed() {
     if declare -F log_command_preview >/dev/null; then
         log_command_preview "$@"
     fi
+    # Phase H: global dry-run — print the plan, execute nothing. Lets an operator
+    # (or the exam) preview the exact command chain a phase would fire.
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        printf '  [DRY-RUN] would run: %s\n' "$(format_command_preview "$@" 2>/dev/null || printf '%s ' "$@")" >&2
+        return 0
+    fi
     if have_tool timeout; then
         timeout "$seconds" "$@"
     else
         "$@"
     fi
+}
+
+# Central OSCP-safe predicate. Defined here (sourced early) so every module can
+# gate exam-risky behavior consistently; module-level copies just delegate.
+offsec_oscp_safe_mode_enabled() {
+    [[ "${OFFSEC_OSCP_SAFE_MODE:-false}" == "true" ]]
 }
 
 # Like run_timed but silences stderr (common for noisy scanners).

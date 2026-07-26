@@ -4,7 +4,7 @@
 # ============================================================================
 
 # ── Metadata ──
-APP_VERSION="4.1"
+APP_VERSION="5.0"
 
 # ── Scan Settings ──
 SCAN_METHOD="auto"          # auto | rustscan | naabu | masscan | nmap | nmap-single | nc | nc-quick
@@ -45,6 +45,13 @@ SQLMAP_OPERATOR_MAX_TARGETS=8 # Max parameterized URLs executed per operator wor
 # ── Engagement Profiles ──
 ENGAGEMENT_PROFILE="balanced" # balanced | offsec-lab | htb | thm | boot2root | custom
 OFFSEC_OSCP_SAFE_MODE=false # Skip exam-risky modules such as sqlmap/nuclei/metasploit mapping
+
+# ── Execution mode ──
+DRY_RUN=false               # true → print the command plan for every phase, execute nothing (--dry-run)
+
+# ── Post-exploitation tooling (Phase D/E) ──
+# Directories searched for local peas/pspy binaries to auto-stage into the serve dir.
+POST_TOOLS_DIRS="/usr/share/peass /usr/share/peass-ng /opt/peass /opt/tools /usr/share/pspy ${HOME}/tools"
 
 # ── Wordlists (prefer seclists → dirb → builtin fallback) ──
 BUILTIN_WORDLIST="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/wordlists/builtin.txt"
@@ -102,6 +109,11 @@ fi
 # ── Brute Force ──
 AUTO_BRUTE=false
 
+# ── Active Directory password spraying ──
+AD_SPRAY_MAX=40             # Số password tối đa khi spray tự động (giảm để tránh lockout)
+# Wordlist fallback khi không tìm thấy list AD nào trên máy (sẽ tải + cache 1 lần):
+AD_PASS_WORDLIST_URL="https://raw.githubusercontent.com/Cryilllic/Active-Directory-Wordlists/master/Passwords.txt"
+
 # ── Output ──
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULTS_BASE="${BASE_DIR}/results"
@@ -113,3 +125,9 @@ TARGET_TYPE=""
 TARGET_LABEL=""
 TARGET_DISPLAY=""
 RESULT_DIR=""
+
+# ── Persisted user overrides (edited from the GUI Settings page or by hand) ──
+# Sourced LAST so it wins over the defaults above. Applies to both the CLI and
+# the web GUI. Safe to delete to fall back to defaults. gitignored.
+_USER_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/user_config.sh"
+[[ -f "$_USER_CONFIG" ]] && source "$_USER_CONFIG"

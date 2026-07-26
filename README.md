@@ -1,8 +1,17 @@
-# Auto Recon v4.1
+# Auto Recon v5.0
 
 **Author:** Canhieu  
-**Type:** Bash-based reconnaissance automation framework  
+**Type:** Bash reconnaissance automation framework — now runnable as **CLI or Web GUI**  
 **Target use:** Lab, CTF, Boot2Root, HTB/THM, OffSec-style practice and authorized internal pentest recon
+
+> **New in v5.0 — Web GUI.** Run everything from a browser on `http://127.0.0.1:2412`:
+> ```bash
+> pip install --user -r web/requirements.txt
+> ./auto_recon.sh --gui            # then open the printed URL (carries a session token)
+> ```
+> Live scan streaming, editable/persistent config, results dashboard, and a reverse-shell
+> console — see [`web/README.md`](web/README.md). The classic CLI (`./auto_recon.sh`) is unchanged.
+> Headless too: `./auto_recon.sh --full-auto --profile htb 10.10.11.10`.
 
 Auto Recon là framework reconnaissance tự động viết bằng Bash, tối ưu cho việc enum một hoặc nhiều target trong môi trường được phép kiểm thử. Tool gom các bước thường phải làm thủ công như port scanning, service enumeration, web recon, vuln correlation, wordlist generation và report vào một menu duy nhất.
 

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+{% set active = 'settings' %}
+<h2 class="h">Settings</h2>
+<p class="lead">Edit persisted defaults. Saved to <code>config/user_config.sh</code> and applied to
+<b>both</b> the CLI and the web GUI. A <span class="badge">changed</span> marker shows values that differ from the shipped defaults.</p>
+
+<div class="card"><div class="pad">
+  <div id="form"><p class="empty">Loading…</p></div>
+  <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+    <button class="btn primary" id="save">Save settings</button>
+    <button class="btn danger" id="reset">Reset to defaults</button>
+    <span class="faint mono" id="ovinfo" style="font-size:.8rem"></span>
+  </div>
+</div></div>
+{% endblock %}
+{% block script %}
+<script>
+let SCHEMA = [], VALUES = {}, OVER = [];
+
+function widget(spec) {
+  const v = VALUES[spec.key];
+  if (spec.type === 'bool') {
+    const on = String(v).toLowerCase() === 'true';
+    return `<label class="switch"><input type="checkbox" data-key="${spec.key}" ${on ? 'checked' : ''}><span class="slider"></span></label>`;
+  }
+  if (spec.type === 'enum') {
+    return `<select data-key="${spec.key}">${spec.options.map(o => `<option ${o === v ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+  }
+  const t = spec.type === 'int' ? 'number' : 'text';
+  return `<input type="${t}" data-key="${spec.key}" value="${v == null ? '' : v}">`;
+}
+
+function render() {
+  const groups = {};
+  SCHEMA.forEach(s => { (groups[s.group] = groups[s.group] || []).push(s); });
+  let html = '';
+  for (const g in groups) {
+    html += `<div class="cfg-group"><h3>${g}</h3>`;
+    groups[g].forEach(s => {
+      const changed = OVER.includes(s.key) ? ' changed' : '';
+      html += `<div class="cfg-item${changed}"><div class="k">${s.label}<span class="code">${s.key}</span></div><div>${widget(s)}</div></div>`;
+    });
+    html += '</div>';
+  }
+  document.getElementById('form').innerHTML = html;
+  document.getElementById('ovinfo').textContent = OVER.length ? (OVER.length + ' setting(s) overridden') : 'all defaults';
+}
+
+async function load() {
+  const d = await api('/api/config');
+  SCHEMA = d.schema; VALUES = d.values; OVER = d.overridden; render();
+}
+function collect() {
+  const out = {};
+  document.querySelectorAll('[data-key]').forEach(el => {
+    out[el.dataset.key] = el.type === 'checkbox' ? String(el.checked) : el.value;
+  });
+  return out;
+}
+document.getElementById('save').addEventListener('click', async function () {
+  try {
+    const d = await api('/api/config', { method: 'POST', body: JSON.stringify(collect()) });
+    VALUES = d.values; OVER = d.overridden; render();
+    toast('Settings saved to user_config.sh', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+});
+document.getElementById('reset').addEventListener('click', async function () {
+  if (!confirm('Delete user_config.sh and fall back to shipped defaults?')) return;
+  try {
+    const d = await api('/api/config/reset', { method: 'POST' });
+    VALUES = d.values; OVER = d.overridden; render();
+    toast('Reset to defaults', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+});
+load();
+</script>
+{% endblock %}

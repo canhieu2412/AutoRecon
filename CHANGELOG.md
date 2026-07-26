@@ -1,5 +1,43 @@
 # Changelog
 
+## v5.0.0
+
+### Web GUI — run as CLI **or** GUI (`web/`, `auto_recon.sh --gui`)
+A localhost web interface on `http://127.0.0.1:2412` that drives the *same* bash
+engine — no scan logic is duplicated. FastAPI + WebSockets backend, server-rendered
+Jinja2 + vanilla-JS frontend (no build step), sharing the report design system.
+- **Full parity**: dashboard (target + profile/engine/safe-mode + Full-Auto or any phase),
+  live scan view (streaming terminal + accurate pipeline tracker from `state/*.env`),
+  results browser (KPIs + severity bar parsed from the report, inline report, file search),
+  per-phase launch pages, and a **reverse-shell console** (catch a shell + base64
+  upload/download, reusing `ReverseShellEngine`).
+- **Editable, persistent config**: Settings page writes `config/user_config.sh`
+  (validated, schema-driven) which `config.sh` sources — so changes apply to CLI **and** GUI.
+- **Flexible launches**: per-scan advanced overrides (engine/depth/threads/fuzzer),
+  target history, toast notifications, running-jobs badge, browser notifications.
+- **Security**: binds `127.0.0.1` only, random session token on every request/WebSocket,
+  file API confined to `results/` (path-traversal rejected), scans spawned via argv arrays,
+  and inherited `BASH_FUNC_*` shell-function shadows stripped from scan subprocesses.
+
+### Headless CLI (also powers the GUI)
+`--full-auto`, `--headless --phase <name>`, `--result-dir`, `--gui`/`--port`/`--unsafe-bind`,
+`--dry-run`. Interactive prompts can be pre-seeded via `AR_ANS_<slug>` env (GUI uses this).
+
+### New phases & modules
+- `modules/13_next_steps.sh` — per-service manual "Try Harder" cheatsheet (menu `[n]`).
+- `modules/14_pivot.sh` — chisel/ligolo-ng/sshuttle/proxychains generator (menu `[v]`).
+- `modules/shell_tui.py` — two-panel Textual reverse-shell + file-transfer console (Shell Handler `[5]`).
+
+### Priv-esc, AD, reporting, OSCP
+- Priv-esc: GTFOBins one-liner resolver + auto-staging of linpeas/winpeas/pspy into the serve dir.
+- AD: lockout-aware spray cap parsed from pass-pol; BloodHound shortest-path hint; auto-spray gated by OSCP-safe.
+- Reporting: OSCP submission template + flag/proof capture (`[x]`); redesigned HTML report.
+- Compliance: startup restricted-tool banner; central OSCP-safe gating.
+
+### Quality
+- `scripts/lint.sh`, `scripts/test_phases.sh`, `scripts/test_web.py`, `Makefile` (`make lint|test`).
+- Bug fixes incl. AD wordlist stdout leak and pivot cheatsheet heredoc under `set -u`.
+
 ## v4.1.0
 
 ### Active Directory Attack Path (new, `modules/12_ad_enum.sh`, menu `[a]`)

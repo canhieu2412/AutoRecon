@@ -1,7 +1,8 @@
-# Runtime scan output
+# Runtime scan output (report.html/logs live under results/, already ignored)
 results/
 *.log
-*.html
+/*.html
+auto_recon.log
 
 # Tool restore/session artifacts
 hydra.restore
@@ -31,3 +32,14 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Python
+__pycache__/
+*.pyc
+
+# Web GUI runtime
+results/_shell/
+web_runs/
+
+# Persisted GUI/user config
+config/user_config.sh

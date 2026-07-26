@@ -20,6 +20,7 @@ wordlist_prompt_value() {
     local default_value="${2:-}"
     local input=""
 
+    local __pre; if declare -F _ar_preseed >/dev/null && __pre=$(_ar_preseed "$label"); then echo "$__pre"; return 0; fi
     if [[ -n "$default_value" ]]; then
         echo -ne "  ${BOLD}${label} [default: ${default_value}]:${NC} "
     else

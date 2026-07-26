@@ -27,6 +27,7 @@ shell_attacker_ip() {
 # Ask for a value (TUI input when available).
 _sh_ask() {
     local prompt="$1" default="$2"
+    local __pre; if declare -F _ar_preseed >/dev/null && __pre=$(_ar_preseed "$prompt"); then printf '%s\n' "$__pre"; return 0; fi
     if declare -F tui_input >/dev/null; then
         tui_input "$prompt" "$default"
     else
@@ -183,6 +184,40 @@ receive_file_from_target() {
     fi
 }
 
+# ── 5. Two-panel TUI console (Textual) ─────────────────────────────────────
+# Live reverse-shell session (left) + upload/download to target (right) in one
+# screen. Transfers ride inside the caught shell (base64), no second listener.
+launch_shell_tui() {
+    local result_dir="$1"
+    ensure_shell_handler_layout "$result_dir"
+    local tui_py="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/modules/shell_tui.py"
+    [[ -f "$tui_py" ]] || { log_error "shell_tui.py not found at ${tui_py}"; return 1; }
+
+    if ! command -v python3 &>/dev/null; then
+        log_error "python3 is required for the TUI console"
+        return 1
+    fi
+    if ! python3 "$tui_py" --check >/dev/null 2>&1; then
+        log_warn "Textual not installed. Install with:  pipx install textual  (or)  pip install --user textual"
+        local ans; ans=$(_sh_ask "Try 'pip install --user textual' now? (y/N)" "N")
+        if [[ "$ans" =~ ^[Yy] ]]; then
+            python3 -m pip install --user textual || { log_error "pip install failed"; return 1; }
+        else
+            return 1
+        fi
+    fi
+
+    local lport; lport=$(_sh_ask "Listen port" "4444")
+    [[ "$lport" =~ ^[0-9]+$ ]] || { log_error "Invalid port"; return 1; }
+    local loot; loot=$(shell_handler_dir "$result_dir")/loot
+    local lhost; lhost=$(shell_attacker_ip)
+    log_info "Launching TUI console — LHOST ${BOLD}${lhost}${NC}  port ${BOLD}${lport}${NC}  loot → ${loot}"
+    log_info "On target, run a reverse-shell payload from option [1] pointing at ${lhost}:${lport}"
+    # The Textual app owns the whole screen; when it exits we return to the menu.
+    python3 "$tui_py" --port "$lport" --loot "$loot"
+    log_info "TUI console closed. Loot in ${loot}"
+}
+
 # ── Sub-menu orchestrator ──────────────────────────────────────────────────
 run_shell_handler() {
     local ip="$1"
@@ -198,6 +233,7 @@ run_shell_handler() {
             sel=$(tui_choose "Chọn" \
                 "1  🧬 Tạo reverse-shell payloads" \
                 "2  🎧 Bật listener (bắt shell)" \
+                "5  🖥️  TUI console (shell + file transfer 2 panel)" \
                 "3  📤 Serve file → target (HTTP)" \
                 "4  📥 Nhận file ← target" \
                 "0  ← Quay lại menu chính")
@@ -207,6 +243,7 @@ run_shell_handler() {
             section_header "SHELL HANDLER & FILE TRANSFER" "$ICON_SCAN"
             echo -e "  ${CYAN}[1]${NC} 🧬 Generate reverse-shell payloads"
             echo -e "  ${CYAN}[2]${NC} 🎧 Start listener (catch shell)"
+            echo -e "  ${CYAN}[5]${NC} 🖥️  TUI console (shell + file transfer, 2-panel)"
             echo -e "  ${CYAN}[3]${NC} 📤 Serve files → target (HTTP)"
             echo -e "  ${CYAN}[4]${NC} 📥 Receive file ← target"
             echo -e "  ${CYAN}[0]${NC} ← Back"
@@ -217,13 +254,14 @@ run_shell_handler() {
         case "$choice" in
             1) generate_revshell_payloads "$result_dir" ;;
             2) start_reverse_listener "$result_dir" ;;
+            5) launch_shell_tui "$result_dir" ;;
             3) serve_files_to_target "$result_dir" ;;
             4) receive_file_from_target "$result_dir" ;;
             0|"") return 0 ;;
             *) log_warn "Unknown choice: $choice"; sleep 1 ;;
         esac
 
-        if [[ "$choice" =~ ^[1-4]$ ]]; then
+        if [[ "$choice" =~ ^[1-5]$ ]]; then
             echo -e "  ${YELLOW}Press Enter to continue...${NC}"
             read -r
         fi

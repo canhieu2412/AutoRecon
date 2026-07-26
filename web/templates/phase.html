@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ phase }}{% endblock %}
+{% block content %}
+{% set titles = {
+  'full-auto':'Full Auto — run every phase',
+  'port_scan':'Port Scan','service_enum':'Service Enumeration','web_recon':'Web Reconnaissance',
+  'vuln_scan':'Vulnerability Scan','next_steps':'Manual Next-Steps','privesc':'Priv-Esc Handoff',
+  'ad_enum':'Active Directory Attack Path','pivot':'Pivoting & Tunneling','wordlist':'Wordlist Toolkit',
+  'brute':'Brute Force','report':'Report Generation'} %}
+<h2 class="h">{{ titles.get(phase, phase) }}</h2>
+<p class="lead">Runs <code>auto_recon.sh --headless --phase {{ phase }}</code>. Most phases expect an earlier
+port/service scan to exist for this target.</p>
+
+<div class="card"><div class="pad">
+  <form id="scanForm">
+    <div class="field">
+      <label class="f" for="target">Target</label>
+      <input id="target" placeholder="10.10.10.10 / box.htb" autocomplete="off" required>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label class="f" for="profile">Profile</label>
+        <select id="profile">{% for p in profiles %}<option {{ 'selected' if p=='htb' }}>{{ p }}</option>{% endfor %}</select>
+      </div>
+      <div class="field">
+        <label class="f"><input type="checkbox" id="safe" style="width:auto;margin-right:8px">OSCP-safe</label>
+      </div>
+    </div>
+
+    {% if phase == 'pivot' %}
+    <div class="field-row">
+      <div class="field"><label class="f">Local SOCKS port</label><input id="ans_local_socks_port" value="1080"></div>
+      <div class="field"><label class="f">Local forward port</label><input id="ans_local_forward_port" value="8001"></div>
+    </div>
+    {% elif phase == 'ad_enum' %}
+    <p class="muted mono" style="font-size:.8rem">Headless AD runs the unauth path (null/guest enum → AS-REP → summary). Password spray is skipped in OSCP-safe mode. Authenticated enum: use the pre-seed answers below or the CLI menu.</p>
+    {% endif %}
+
+    <details style="margin:6px 0 14px">
+      <summary class="mono" style="cursor:pointer;color:var(--muted);font-size:.82rem">Advanced — pre-seed prompt answers</summary>
+      <p class="faint mono" style="font-size:.75rem;margin:8px 0 6px">One <code>prompt = value</code> per line. The prompt text is slugified and matched to interactive prompts (e.g. <code>Listen port = 4444</code>).</p>
+      <textarea id="answers" rows="4" placeholder="Listen port = 4444&#10;Username = admin"></textarea>
+    </details>
+
+    <button class="btn primary" type="submit">▶ Run {{ phase }}</button>
+    <span id="err" style="color:var(--crit);font-family:var(--mono);font-size:.8rem;margin-left:12px"></span>
+  </form>
+</div></div>
+{% endblock %}
+{% block script %}
+<script>
+const PHASE = "{{ phase }}";
+function collectAnswers() {
+  const a = {};
+  document.querySelectorAll('[id^="ans_"]').forEach(el => { if (el.value) a[el.id.slice(4).replace(/_/g,' ')] = el.value; });
+  const ta = document.getElementById('answers');
+  (ta ? ta.value : '').split('\n').forEach(line => {
+    const i = line.indexOf('='); if (i > 0) a[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  });
+  return a;
+}
+document.getElementById('scanForm').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  document.getElementById('err').textContent = '';
+  const body = {
+    target: document.getElementById('target').value.trim(),
+    profile: document.getElementById('profile').value,
+    safe_mode: document.getElementById('safe').checked,
+    action: PHASE, answers: collectAnswers(), config: configOverrides(),
+  };
+  try {
+    const r = await api('/api/scan', { method: 'POST', body: JSON.stringify(body) });
+    location.href = '/scan/' + r.job_id;
+  } catch (err) { document.getElementById('err').textContent = err.message; }
+});
+</script>
+{% endblock %}

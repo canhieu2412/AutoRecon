@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Scan {{ job.target }}{% endblock %}
+{% block content %}
+<h2 class="h">{{ job.target }} · {{ job.action }}</h2>
+<p class="lead">
+  <span class="pill st-{{ job.status }}" id="status">{{ job.status }}</span>
+  <span class="faint mono" style="margin-left:10px">job {{ job.id }}</span>
+</p>
+
+<div class="grid2">
+  <div>
+    <div class="card"><div class="pad" style="padding-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <p class="eyebrow" style="margin:0">Live output</p>
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="copyBtn" title="copy log">⧉ Copy</button>
+          <button class="btn danger" id="stopBtn">■ Stop</button>
+        </div>
+      </div>
+      <div class="term" id="term"></div>
+    </div></div>
+  </div>
+
+  <aside>
+    <div class="card"><div class="pad">
+      <p class="eyebrow" style="margin-top:0">Pipeline</p>
+      <div class="track" id="track"><p class="faint mono" style="font-size:.8rem">waiting…</p></div>
+    </div></div>
+    <div class="card"><div class="pad">
+      <a class="btn" href="/results/{{ job.result_label }}">📂 Browse results</a>
+      <a class="btn" href="/api/targets/{{ job.result_label }}/report" target="_blank" style="margin-top:8px">📄 Open report</a>
+    </div></div>
+  </aside>
+</div>
+{% endblock %}
+{% block script %}
+<script>
+const jobId = "{{ job.id }}";
+const label = "{{ job.result_label }}";
+const term = document.getElementById('term');
+const statusEl = document.getElementById('status');
+let ended = false;
+
+streamJob(jobId, term, {
+  onend: function (st) {
+    ended = true;
+    statusEl.textContent = st; statusEl.className = 'pill st-' + st;
+    document.getElementById('stopBtn').disabled = true;
+    refreshPhases();
+    if ('Notification' in window && Notification.permission === 'granted')
+      new Notification('Auto Recon', { body: label + ' — ' + st });
+    toast('Scan ' + st + ': ' + label, st === 'failed' ? 'err' : 'ok');
+  }
+});
+
+// accurate tracker from the real state/*.env files
+async function refreshPhases() {
+  try {
+    const { phases } = await api('/api/targets/' + encodeURIComponent(label) + '/phases');
+    const el = document.getElementById('track');
+    if (!phases.length) { el.innerHTML = '<p class="faint mono" style="font-size:.8rem">waiting…</p>'; return; }
+    const cls = { completed: 'done', failed: 'failed', running: 'running', skipped: 'skipped' };
+    el.innerHTML = phases.map(p =>
+      `<div class="tphase ${cls[p.status] || ''}"><span class="st"></span>
+        <span class="pn">${p.phase}</span>
+        <span class="pd">${p.status === 'skipped' ? 'skip' : (p.duration ? p.duration + 's' : p.status)}</span></div>`).join('');
+  } catch (e) {}
+}
+const poll = setInterval(function () { refreshPhases(); if (ended) clearInterval(poll); }, 2500);
+refreshPhases();
+
+document.getElementById('stopBtn').addEventListener('click', async function () {
+  try { await api('/api/jobs/' + jobId + '/stop', { method: 'POST' }); toast('Stop requested', 'info'); } catch (e) {}
+});
+document.getElementById('copyBtn').addEventListener('click', function () {
+  copyText(Array.from(term.querySelectorAll('.l')).map(s => s.textContent).join('\n'));
+});
+if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+</script>
+{% endblock %}

