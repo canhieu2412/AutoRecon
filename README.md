@@ -3,6 +3,8 @@
 **Author:** Canhieu  
 **Type:** Bash reconnaissance automation framework — now runnable as **CLI or Web GUI**  
 **Target use:** Lab, CTF, Boot2Root, HTB/THM, OffSec-style practice and authorized internal pentest recon
+![Uploading image.png…]()
+
 
 > **New in v5.0 — Web GUI.** Run everything from a browser on `http://127.0.0.1:2412`:
 > ```bash
